@@ -18,6 +18,7 @@ const TAILLIGHT_COLOR := Color(1.0, 0.35, 0.30, 1)    # #ff5a4d
 @export var arrival_radius: float = 2.0     # px tolerance for "reached waypoint"
 @export var turn_radius: float = 22.0       # px; pull-back before intersection for arc
 @export var bezier_samples: int = 24        # samples per turn arc
+@export var look_ahead: float = 30.0        # px; aim heading at a point this far ahead
 @export var debug_lane: bool = false        # log signed lane offset each frame
 
 var graph: RoadGraph = null
@@ -148,11 +149,34 @@ func _process(delta: float) -> void:
 	var step: float = min(speed * delta, dist)
 	position_on_road += to_target.normalized() * step
 	position = position_on_road
-	# Set heading directly to the travel direction. The precomputed trajectory
-	# (with densely sampled bezier arcs) already produces smooth direction
-	# changes, so lerping introduces lag/choppiness at turn boundaries.
-	heading = to_target.angle()
+	# Look-ahead heading: find a point a fixed distance ahead on the trajectory
+	# and aim there. This produces smooth, speed-independent heading changes
+	# through turns (especially sharp bezier arcs) instead of choppy jumps
+	# between discrete waypoints.
+	var ahead_point: Vector2 = _look_ahead_on_trajectory(look_ahead)
+	heading = (ahead_point - position_on_road).angle()
 	queue_redraw()
+
+func _look_ahead_on_trajectory(distance: float) -> Vector2:
+	# Walk along the trajectory from the current segment (traj_index -> traj_index+1)
+	# accumulating arc length until we reach 'distance' ahead of the current position.
+	var remaining: float = distance
+	var pos: Vector2 = position_on_road
+	var i: int = traj_index
+	var max_i: int = trajectory.size() - 1
+	while i < max_i:
+		var seg_start: Vector2 = trajectory[i] if i > traj_index else pos
+		var seg_end: Vector2 = trajectory[i + 1]
+		var seg_len: float = seg_start.distance_to(seg_end)
+		if seg_len <= 0.001:
+			i += 1
+			continue
+		if remaining <= seg_len:
+			return seg_start + (seg_end - seg_start).normalized() * remaining
+		remaining -= seg_len
+		i += 1
+	# Ran out of trajectory; return the last point.
+	return trajectory[max_i]
 
 func _estimate_current_segment() -> Vector2i:
 	# Map current position back to the path segment whose centerline is closest.
