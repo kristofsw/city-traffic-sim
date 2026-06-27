@@ -1,0 +1,7 @@
+# Godot 4
+.godot/
+/export/*
+!/export/.gdignore
+
+# OS
+.DS_Store
