@@ -81,23 +81,45 @@ func _draw() -> void:
 func _draw_route() -> void:
 	if route_path.size() < 2:
 		return
-	# Build the same right-lane offset trajectory the vehicle follows:
-	# straight portions on the right lane + bezier arcs at turns.
-	# This keeps the route line on the right lane through intersections
-	# instead of cutting across the center.
-	var pts: Array[Vector2] = _build_route_offset_points()
+	# Build the same right-lane offset trajectory the vehicle follows
+	# (LineSeg + BezierSeg), then sample it at fixed arc-length intervals
+	# for a smooth polyline. This keeps the route line on the right lane
+	# through intersections and draws smooth bezier curves at turns.
+	var segs: Array[TrajectorySegment] = _build_route_segments()
+	if segs.is_empty():
+		return
+	# Cumulative arc lengths.
+	var cum_arc: Array[float] = []
+	var total: float = 0.0
+	for seg in segs:
+		cum_arc.append(total)
+		total += seg.length
+	# Sample every ~4px for a smooth line.
+	var sample_interval: float = 4.0
+	var pts: PackedVector2Array = PackedVector2Array()
+	var arc: float = 0.0
+	while arc <= total:
+		pts.append(_position_on_segments(segs, cum_arc, arc))
+		arc += sample_interval
 	if pts.size() < 2:
 		return
-	for i in range(pts.size() - 1):
-		draw_line(pts[i], pts[i + 1], ROUTE_LINE_COLOR, 3.0, true)
+	draw_polyline(pts, ROUTE_LINE_COLOR, 3.0, true)
 	# Start (A) ring: green, on the right lane.
-	_draw_ring(pts[0], 10.0, ROUTE_START_COLOR)
+	_draw_ring(segs[0].position_at(0.0), 10.0, ROUTE_START_COLOR)
 	# Goal (B) ring: red, on the right lane.
-	_draw_ring(pts[pts.size() - 1], 10.0, ROUTE_GOAL_COLOR)
+	_draw_ring(segs[segs.size() - 1].position_at(segs[segs.size() - 1].length), 10.0, ROUTE_GOAL_COLOR)
 
-func _build_route_offset_points() -> Array[Vector2]:
+func _position_on_segments(segs: Array[TrajectorySegment], cum_arc: Array[float], arc: float) -> Vector2:
+	# Find the segment containing 'arc' (linear walk; small arrays).
+	var i: int = 0
+	while i < segs.size() - 1 and arc >= cum_arc[i] + segs[i].length:
+		i += 1
+	var local_s: float = arc - cum_arc[i]
+	return segs[i].position_at(local_s)
+
+func _build_route_segments() -> Array[TrajectorySegment]:
 	var p: Array[Vector2i] = route_path
-	var out: Array[Vector2] = []
+	var out: Array[TrajectorySegment] = []
 	if p.size() < 2:
 		return out
 	# Per-segment direction, right-hand perpendicular, entry/exit offsets.
@@ -113,15 +135,14 @@ func _build_route_offset_points() -> Array[Vector2]:
 		entries.append(a + perp * lane_offset)
 		exits.append(b + perp * lane_offset)
 	var current_pos: Vector2 = entries[0]
-	out.append(current_pos)
 	for i in range(p.size() - 1):
 		var is_last: bool = (i == p.size() - 2)
 		var has_turn: bool = false
 		if not is_last:
 			has_turn = dirs[i].dot(dirs[i + 1]) < 0.99
 		if is_last or not has_turn:
-			if current_pos.distance_to(exits[i]) > 1.0:
-				out.append(exits[i])
+			if current_pos.distance_to(exits[i]) > 0.5:
+				out.append(LineSeg.new(current_pos, exits[i]))
 			current_pos = exits[i]
 		else:
 			var seg_len: float = entries[i].distance_to(exits[i])
@@ -130,20 +151,16 @@ func _build_route_offset_points() -> Array[Vector2]:
 			tr = max(tr, 2.0)
 			var approach: Vector2 = exits[i] - dirs[i] * tr
 			var leave: Vector2 = entries[i + 1] + dirs[i + 1] * tr
-			if current_pos.distance_to(approach) > 1.0:
-				out.append(approach)
+			if current_pos.distance_to(approach) > 0.5:
+				out.append(LineSeg.new(current_pos, approach))
 			var cross: float = dirs[i].x * dirs[i + 1].y - dirs[i].y * dirs[i + 1].x
 			if abs(cross) < 0.001:
-				out.append(leave)
+				out.append(LineSeg.new(approach, leave))
 			else:
 				var delta: Vector2 = leave - approach
 				var t_ctrl: float = (delta.x * dirs[i + 1].y - delta.y * dirs[i + 1].x) / cross
 				var control: Vector2 = approach + dirs[i] * t_ctrl
-				var samples: int = 18
-				for s in range(1, samples + 1):
-					var bt: float = float(s) / float(samples)
-					var pt: Vector2 = approach.lerp(control, bt).lerp(control.lerp(leave, bt), bt)
-					out.append(pt)
+				out.append(BezierSeg.new(approach, control, leave))
 			current_pos = leave
 	return out
 

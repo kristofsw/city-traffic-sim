@@ -1,10 +1,9 @@
 class_name VehicleController
 extends Node2D
-## Drives a vehicle along a path of grid intersections. The trajectory is
-## precomputed as offset waypoints on the RIGHT-hand side of each segment,
-## connected by quadratic bezier arcs at intersections so the car rounds
-## corners on the right side (Belgium-style right-hand traffic) and never
-## swerves into the oncoming lane.
+## Drives a vehicle along a parametric trajectory of LineSeg and BezierSeg
+## segments. Position and heading are both derived from the SAME arc-length
+## parameter each frame, so the car body is always exactly tangent to the
+## curve -- no skating, no choppiness, no speed-dependent artifacts.
 
 signal arrived
 
@@ -13,68 +12,64 @@ const HEADLIGHT_COLOR := Color(1.0, 0.96, 0.84, 1)    # #fff4d6
 const TAILLIGHT_COLOR := Color(1.0, 0.35, 0.30, 1)    # #ff5a4d
 
 @export var speed: float = 120.0            # px / sec
-@export var rotation_speed: float = 12.0    # rad / sec (lerp factor for heading)
 @export var lane_offset: float = 12.0       # half-lane, right-hand drive
-@export var arrival_radius: float = 2.0     # px tolerance for "reached waypoint"
 @export var turn_radius: float = 22.0       # px; pull-back before intersection for arc
-@export var bezier_samples: int = 24        # samples per turn arc
-@export var look_ahead: float = 30.0        # px; aim heading at a point this far ahead
 @export var debug_lane: bool = false        # log signed lane offset each frame
 
 var graph: RoadGraph = null
 var path: Array[Vector2i] = []
-var trajectory: Array[Vector2] = []         # world-space points to drive through
-var traj_index: int = 0
+var segments: Array[TrajectorySegment] = []
+var seg_start_arc: Array[float] = []        # cumulative arc length at start of each segment
+var total_length: float = 0.0
+var s: float = 0.0                          # arc-length position along whole trajectory
+var seg_index: int = 0                      # cached current segment index
 var heading: float = 0.0
 var position_on_road: Vector2 = Vector2.ZERO
-var _current_segment_key: Vector2i = Vector2i.ZERO  # for lane-invariant logging
+var _current_segment_key: Vector2i = Vector2i.ZERO
 
 func _ready() -> void:
 	position = position_on_road
 
 func assign_path(new_path: Array[Vector2i]) -> void:
 	path = new_path
-	traj_index = 0
-	trajectory = _build_trajectory(new_path)
-	# Start the car ON the right lane (first trajectory point), not at the
-	# intersection center, so it never appears in the oncoming lane.
-	if trajectory.size() >= 1:
-		position_on_road = trajectory[0]
+	segments = _build_segments(new_path)
+	seg_start_arc.clear()
+	var cum: float = 0.0
+	for seg in segments:
+		seg_start_arc.append(cum)
+		cum += seg.length
+	total_length = cum
+	s = 0.0
+	seg_index = 0
+	if segments.size() > 0:
+		position_on_road = segments[0].position_at(0.0)
+		heading = segments[0].tangent_at(0.0)
 		position = position_on_road
 	if path.size() >= 1:
 		_current_segment_key = path[0]
-	if trajectory.size() >= 2:
-		heading = (trajectory[1] - trajectory[0]).angle()
-	elif path.size() >= 2:
-		heading = _direction_to(path[0], path[1]).angle()
 
-func _build_trajectory(p: Array[Vector2i]) -> Array[Vector2]:
-	var out: Array[Vector2] = []
+func _build_segments(p: Array[Vector2i]) -> Array[TrajectorySegment]:
+	var out: Array[TrajectorySegment] = []
 	if p.size() < 2:
-		if p.size() == 1:
-			out.append(graph.world_of(p[0]))
 		return out
 
 	# Per-segment data: direction, right-hand perpendicular, entry/exit offsets.
 	var dirs: Array[Vector2] = []
-	var perps: Array[Vector2] = []
 	var entries: Array[Vector2] = []
 	var exits: Array[Vector2] = []
 	for i in range(p.size() - 1):
 		var a: Vector2 = graph.world_of(p[i])
 		var b: Vector2 = graph.world_of(p[i + 1])
 		var d: Vector2 = (b - a).normalized()
-		var perp: Vector2 = Vector2(-d.y, d.x)  # right-hand perpendicular in y-down screen space
+		var perp: Vector2 = Vector2(-d.y, d.x)  # right-hand perpendicular (y-down)
 		dirs.append(d)
-		perps.append(perp)
 		entries.append(a + perp * lane_offset)
 		exits.append(b + perp * lane_offset)
 
-	# Build a continuous trajectory: alternating straight portions and bezier
-	# arcs at intersections. The car never leaves the right-hand side because
-	# every waypoint is offset by its segment's right-hand perpendicular.
+	# Build a continuous trajectory: alternating LineSeg (straights) and
+	# BezierSeg (turn arcs) at intersections. All points are offset to the
+	# right-hand lane, so the car never enters the oncoming lane.
 	var current_pos: Vector2 = entries[0]
-	out.append(current_pos)
 
 	for i in range(p.size() - 1):
 		var is_last: bool = (i == p.size() - 2)
@@ -84,8 +79,8 @@ func _build_trajectory(p: Array[Vector2i]) -> Array[Vector2]:
 
 		if is_last or not has_turn:
 			# Straight through to the exit of this segment.
-			if current_pos.distance_to(exits[i]) > 1.0:
-				out.append(exits[i])
+			if current_pos.distance_to(exits[i]) > 0.5:
+				out.append(LineSeg.new(current_pos, exits[i]))
 			current_pos = exits[i]
 		else:
 			# Turn: straight to approach point, then bezier arc to leave point.
@@ -98,8 +93,8 @@ func _build_trajectory(p: Array[Vector2i]) -> Array[Vector2]:
 			var leave: Vector2 = entries[i + 1] + dirs[i + 1] * tr
 
 			# Straight portion: current_pos -> approach
-			if current_pos.distance_to(approach) > 1.0:
-				out.append(approach)
+			if current_pos.distance_to(approach) > 0.5:
+				out.append(LineSeg.new(current_pos, approach))
 
 			# Bezier control point: intersection of the two offset tangent lines.
 			# Line 1: through approach, direction dirs[i]
@@ -108,78 +103,50 @@ func _build_trajectory(p: Array[Vector2i]) -> Array[Vector2]:
 			var cross: float = dirs[i].x * dirs[i + 1].y - dirs[i].y * dirs[i + 1].x
 			if abs(cross) < 0.001:
 				# Near-parallel fallback (shouldn't happen for real turns).
-				out.append(leave)
+				out.append(LineSeg.new(approach, leave))
 			else:
 				var delta: Vector2 = leave - approach
 				var t_ctrl: float = (delta.x * dirs[i + 1].y - delta.y * dirs[i + 1].x) / cross
 				var control: Vector2 = approach + dirs[i] * t_ctrl
-				# Sample quadratic bezier: B(t) = (1-t)^2 P0 + 2(1-t)t C + t^2 P1
-				for s in range(1, bezier_samples + 1):
-					var bt: float = float(s) / float(bezier_samples)
-					var pt: Vector2 = approach.lerp(control, bt).lerp(control.lerp(leave, bt), bt)
-					out.append(pt)
+				out.append(BezierSeg.new(approach, control, leave))
 
 			current_pos = leave
 	return out
 
 func _process(delta: float) -> void:
-	if graph == null or trajectory.size() < 2 or traj_index >= trajectory.size() - 1:
-		# Check arrival. Guard BEFORE emit so the post-emit assignment
-		# (which resets traj_index via assign_path) is not overwritten.
-		if trajectory.size() > 0 and traj_index >= trajectory.size() - 1:
-			traj_index = trajectory.size()  # guard against re-emit BEFORE handler runs
+	if graph == null or segments.is_empty() or s >= total_length:
+		# Arrival check. Guard BEFORE emit so the handler's assign_path
+		# (which resets s=0 and segments) is not overwritten.
+		if segments.size() > 0 and s >= total_length:
+			s = total_length + 1.0  # guard against re-emit
 			arrived.emit()
 		return
 
-	var target: Vector2 = trajectory[traj_index + 1]
-	var to_target: Vector2 = target - position_on_road
-	var dist: float = to_target.length()
+	# Advance arc length by speed * delta.
+	s += speed * delta
+	if s >= total_length:
+		s = total_length
+	# Find the segment containing the current arc length.
+	_advance_segment_index()
+	var local_s: float = s - seg_start_arc[seg_index]
+	var seg: TrajectorySegment = segments[seg_index]
+	# Position and heading both come from the same parametric evaluation.
+	position_on_road = seg.position_at(local_s)
+	heading = seg.tangent_at(local_s)
+	position = position_on_road
 
-	# Update current segment key for lane-invariant logging (find which segment
-	# the car is currently on based on closest entry/exit pair).
 	_current_segment_key = _estimate_current_segment()
-
 	if debug_lane:
 		print("[Vehicle] lane_offset_signed=%.2f seg=%s pos=%s" % [_signed_lane_offset(), _current_segment_key, position_on_road])
 
-	if dist <= arrival_radius:
-		traj_index += 1
-		return
-
-	var step: float = min(speed * delta, dist)
-	position_on_road += to_target.normalized() * step
-	position = position_on_road
-	# Look-ahead heading: find a point a fixed distance ahead on the trajectory
-	# and aim there. This produces smooth, speed-independent heading changes
-	# through turns (especially sharp bezier arcs) instead of choppy jumps
-	# between discrete waypoints.
-	var ahead_point: Vector2 = _look_ahead_on_trajectory(look_ahead)
-	heading = (ahead_point - position_on_road).angle()
 	queue_redraw()
 
-func _look_ahead_on_trajectory(distance: float) -> Vector2:
-	# Walk along the trajectory from the current segment (traj_index -> traj_index+1)
-	# accumulating arc length until we reach 'distance' ahead of the current position.
-	var remaining: float = distance
-	var pos: Vector2 = position_on_road
-	var i: int = traj_index
-	var max_i: int = trajectory.size() - 1
-	while i < max_i:
-		var seg_start: Vector2 = trajectory[i] if i > traj_index else pos
-		var seg_end: Vector2 = trajectory[i + 1]
-		var seg_len: float = seg_start.distance_to(seg_end)
-		if seg_len <= 0.001:
-			i += 1
-			continue
-		if remaining <= seg_len:
-			return seg_start + (seg_end - seg_start).normalized() * remaining
-		remaining -= seg_len
-		i += 1
-	# Ran out of trajectory; return the last point.
-	return trajectory[max_i]
+func _advance_segment_index() -> void:
+	# Walk forward from the cached index until we find the segment containing s.
+	while seg_index < segments.size() - 1 and s >= seg_start_arc[seg_index] + segments[seg_index].length:
+		seg_index += 1
 
 func _estimate_current_segment() -> Vector2i:
-	# Map current position back to the path segment whose centerline is closest.
 	var best: Vector2i = path[0]
 	var best_d: float = INF
 	for i in range(path.size() - 1):
@@ -198,11 +165,8 @@ func _dist_point_to_segment(p: Vector2, a: Vector2, b: Vector2) -> float:
 	return p.distance_to(proj)
 
 func _signed_lane_offset() -> float:
-	# Signed perpendicular distance from current segment centerline.
-	# Positive = right-hand side (correct). Negative = oncoming lane (bug).
 	if path.size() < 2:
 		return 0.0
-	# Find segment nearest to current position.
 	var best_i: int = 0
 	var best_d: float = INF
 	for i in range(path.size() - 1):
@@ -215,7 +179,7 @@ func _signed_lane_offset() -> float:
 	var a: Vector2 = graph.world_of(path[best_i])
 	var b: Vector2 = graph.world_of(path[best_i + 1])
 	var d: Vector2 = (b - a).normalized()
-	var perp: Vector2 = Vector2(-d.y, d.x)  # right-hand perpendicular (y-down screen space)
+	var perp: Vector2 = Vector2(-d.y, d.x)
 	return (position_on_road - a).dot(perp)
 
 func _draw() -> void:
@@ -248,4 +212,4 @@ func _direction_to(a: Vector2i, b: Vector2i) -> Vector2:
 	return (graph.world_of(b) - graph.world_of(a)).normalized()
 
 func is_busy() -> bool:
-	return traj_index < trajectory.size() - 1
+	return s < total_length
