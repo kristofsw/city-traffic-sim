@@ -41,7 +41,7 @@ func _assign_new_path_from(current: Vector2i) -> void:
 		printerr("[SimulationManager] no path %s -> %s" % [current, goal])
 		return
 	vehicle.assign_path(p)
-	road_grid.set_debug_path(p)
+	road_grid.set_route(current, goal, p)
 	print("[SimulationManager] path %s -> %s (%d hops)" % [current, goal, p.size()])
 
 func _on_vehicle_arrived() -> void:
