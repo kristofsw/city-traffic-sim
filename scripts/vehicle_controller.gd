@@ -13,11 +13,11 @@ const HEADLIGHT_COLOR := Color(1.0, 0.96, 0.84, 1)    # #fff4d6
 const TAILLIGHT_COLOR := Color(1.0, 0.35, 0.30, 1)    # #ff5a4d
 
 @export var speed: float = 120.0            # px / sec
-@export var rotation_speed: float = 8.0     # rad / sec (lerp factor for heading)
+@export var rotation_speed: float = 12.0    # rad / sec (lerp factor for heading)
 @export var lane_offset: float = 12.0       # half-lane, right-hand drive
-@export var arrival_radius: float = 3.0     # px tolerance for "reached waypoint"
-@export var turn_radius: float = 18.0       # px; pull-back before intersection for arc
-@export var bezier_samples: int = 14        # samples per turn arc
+@export var arrival_radius: float = 2.0     # px tolerance for "reached waypoint"
+@export var turn_radius: float = 22.0       # px; pull-back before intersection for arc
+@export var bezier_samples: int = 24        # samples per turn arc
 @export var debug_lane: bool = false        # log signed lane offset each frame
 
 var graph: RoadGraph = null
@@ -35,9 +35,12 @@ func assign_path(new_path: Array[Vector2i]) -> void:
 	path = new_path
 	traj_index = 0
 	trajectory = _build_trajectory(new_path)
-	if path.size() >= 1:
-		position_on_road = graph.world_of(path[0])
+	# Start the car ON the right lane (first trajectory point), not at the
+	# intersection center, so it never appears in the oncoming lane.
+	if trajectory.size() >= 1:
+		position_on_road = trajectory[0]
 		position = position_on_road
+	if path.size() >= 1:
 		_current_segment_key = path[0]
 	if trajectory.size() >= 2:
 		heading = (trajectory[1] - trajectory[0]).angle()
@@ -145,9 +148,10 @@ func _process(delta: float) -> void:
 	var step: float = min(speed * delta, dist)
 	position_on_road += to_target.normalized() * step
 	position = position_on_road
-	# Smoothly rotate heading toward travel direction.
-	var desired: float = to_target.angle()
-	heading = lerp_angle(heading, desired, clamp(rotation_speed * delta, 0.0, 1.0))
+	# Set heading directly to the travel direction. The precomputed trajectory
+	# (with densely sampled bezier arcs) already produces smooth direction
+	# changes, so lerping introduces lag/choppiness at turn boundaries.
+	heading = to_target.angle()
 	queue_redraw()
 
 func _estimate_current_segment() -> Vector2i:
