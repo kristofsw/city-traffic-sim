@@ -70,7 +70,7 @@ func boundary_nodes() -> Array[Vector2i]:
 	return out
 
 
-func all_nodes() -> Array:
+func all_nodes() -> Array[Vector2i]:
 	return nodes.keys()
 
 

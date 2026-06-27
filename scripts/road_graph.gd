@@ -21,7 +21,7 @@ func world_of(key: Vector2i) -> Vector2:
 	return nodes[key]
 
 
-func neighbors_of(key: Vector2i) -> Array:
+func neighbors_of(key: Vector2i) -> Array[Vector2i]:
 	if not edges.has(key):
 		return []
 	return edges[key]

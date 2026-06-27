@@ -20,7 +20,6 @@ const TAILLIGHT_COLOR := Color(1.0, 0.35, 0.30, 1)  # #ff5a4d
 @export var max_speed: float = 120.0  # px/s (cruising speed)
 @export var accel_rate: float = 180.0  # px/s^2 (acceleration)
 @export var decel_rate: float = 300.0  # px/s^2 (braking, stronger than accel)
-@export var accel_distance: float = 80.0  # px over which to ramp up at start
 @export var decel_distance: float = 60.0  # px before destination to start braking
 @export var turn_slowdown_factor: float = 0.3  # speed reduction per radian of turn
 @export var min_turn_speed_ratio: float = 0.35  # never slower than this fraction in a turn
@@ -41,7 +40,6 @@ var heading: float = 0.0
 var position_on_road: Vector2 = Vector2.ZERO
 var current_speed: float = 0.0  # actual speed (px/s), rate-limited toward target
 var _current_segment_key: Vector2i = Vector2i.ZERO
-var _eff_accel: float = 0.0  # clamped accel distance for current trip
 var _eff_decel: float = 0.0  # clamped decel distance for current trip
 
 
@@ -51,7 +49,7 @@ func _ready() -> void:
 
 func assign_path(new_path: Array[Vector2i]) -> void:
 	path = new_path
-	segments = _build_segments(new_path)
+	segments = TrajectoryBuilder.build(graph, new_path, lane_offset, turn_radius)
 	seg_start_arc.clear()
 	var cum: float = 0.0
 	for seg in segments:
@@ -69,68 +67,6 @@ func assign_path(new_path: Array[Vector2i]) -> void:
 		position = position_on_road
 	if path.size() >= 1:
 		_current_segment_key = path[0]
-
-
-func _build_segments(p: Array[Vector2i]) -> Array[TrajectorySegment]:
-	var out: Array[TrajectorySegment] = []
-	if p.size() < 2:
-		return out
-
-	# Per-segment data: direction, right-hand perpendicular, entry/exit offsets.
-	var dirs: Array[Vector2] = []
-	var entries: Array[Vector2] = []
-	var exits: Array[Vector2] = []
-	for i in range(p.size() - 1):
-		var a: Vector2 = graph.world_of(p[i])
-		var b: Vector2 = graph.world_of(p[i + 1])
-		var d: Vector2 = (b - a).normalized()
-		var perp: Vector2 = Vector2(-d.y, d.x)  # right-hand perpendicular (y-down)
-		dirs.append(d)
-		entries.append(a + perp * lane_offset)
-		exits.append(b + perp * lane_offset)
-
-	# Build a continuous trajectory: alternating LineSeg (straights) and
-	# BezierSeg (turn arcs) at intersections. All points are offset to the
-	# right-hand lane, so the car never enters the oncoming lane.
-	var current_pos: Vector2 = entries[0]
-
-	for i in range(p.size() - 1):
-		var is_last: bool = i == p.size() - 2
-		var has_turn: bool = false
-		if not is_last:
-			has_turn = dirs[i].dot(dirs[i + 1]) < 0.99
-
-		if is_last or not has_turn:
-			# Straight through to the exit of this segment.
-			if current_pos.distance_to(exits[i]) > 0.5:
-				out.append(LineSeg.new(current_pos, exits[i]))
-			current_pos = exits[i]
-		else:
-			# Turn: straight to approach point, then bezier arc to leave point.
-			var seg_len: float = entries[i].distance_to(exits[i])
-			var next_seg_len: float = entries[i + 1].distance_to(exits[i + 1])
-			var tr: float = min(turn_radius, seg_len * 0.4, next_seg_len * 0.4)
-			tr = max(tr, 2.0)
-
-			var approach: Vector2 = exits[i] - dirs[i] * tr
-			var leave: Vector2 = entries[i + 1] + dirs[i + 1] * tr
-
-			# Straight portion: current_pos -> approach
-			if current_pos.distance_to(approach) > 0.5:
-				out.append(LineSeg.new(current_pos, approach))
-
-			# Bezier control point: intersection of the two offset tangent lines.
-			var cross: float = dirs[i].x * dirs[i + 1].y - dirs[i].y * dirs[i + 1].x
-			if abs(cross) < 0.001:
-				out.append(LineSeg.new(approach, leave))
-			else:
-				var delta: Vector2 = leave - approach
-				var t_ctrl: float = (delta.x * dirs[i + 1].y - delta.y * dirs[i + 1].x) / cross
-				var control: Vector2 = approach + dirs[i] * t_ctrl
-				out.append(BezierSeg.new(approach, control, leave))
-
-			current_pos = leave
-	return out
 
 
 func _process(delta: float) -> void:
@@ -318,10 +254,6 @@ func _draw() -> void:
 	)
 	draw_circle(rear_world + Vector2(0, -width * 0.3).rotated(heading), brake_radius, taillight)
 	draw_circle(rear_world + Vector2(0, width * 0.3).rotated(heading), brake_radius, taillight)
-
-
-func _direction_to(a: Vector2i, b: Vector2i) -> Vector2:
-	return (graph.world_of(b) - graph.world_of(a)).normalized()
 
 
 func is_busy() -> bool:

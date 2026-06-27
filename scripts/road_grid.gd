@@ -49,19 +49,13 @@ func _regenerate() -> void:
 func _draw() -> void:
 	if graph == null:
 		return
-	# Road surface: thick asphalt line per edge.
+	# Road surface + lane markings: single pass over edges (each edge once).
 	for key in graph.edges:
 		var from: Vector2 = graph.world_of(key)
 		for n in graph.edges[key]:
 			if key < n:
 				var to: Vector2 = graph.world_of(n)
 				draw_line(from, to, ASPHALT_COLOR, road_width, true)
-	# Lane center markings: thin dashed line per edge.
-	for key in graph.edges:
-		var from: Vector2 = graph.world_of(key)
-		for n in graph.edges[key]:
-			if key < n:
-				var to: Vector2 = graph.world_of(n)
 				_draw_dashed_line(from, to, LANE_MARK_COLOR, 1.5, 16.0, 12.0)
 	# Intersection squares to mask seam artifacts.
 	for key in graph.nodes:
@@ -128,51 +122,7 @@ func _position_on_segments(
 
 
 func _build_route_segments() -> Array[TrajectorySegment]:
-	var p: Array[Vector2i] = route_path
-	var out: Array[TrajectorySegment] = []
-	if p.size() < 2:
-		return out
-	# Per-segment direction, right-hand perpendicular, entry/exit offsets.
-	var dirs: Array[Vector2] = []
-	var entries: Array[Vector2] = []
-	var exits: Array[Vector2] = []
-	for i in range(p.size() - 1):
-		var a: Vector2 = graph.world_of(p[i])
-		var b: Vector2 = graph.world_of(p[i + 1])
-		var d: Vector2 = (b - a).normalized()
-		var perp: Vector2 = Vector2(-d.y, d.x)
-		dirs.append(d)
-		entries.append(a + perp * lane_offset)
-		exits.append(b + perp * lane_offset)
-	var current_pos: Vector2 = entries[0]
-	for i in range(p.size() - 1):
-		var is_last: bool = i == p.size() - 2
-		var has_turn: bool = false
-		if not is_last:
-			has_turn = dirs[i].dot(dirs[i + 1]) < 0.99
-		if is_last or not has_turn:
-			if current_pos.distance_to(exits[i]) > 0.5:
-				out.append(LineSeg.new(current_pos, exits[i]))
-			current_pos = exits[i]
-		else:
-			var seg_len: float = entries[i].distance_to(exits[i])
-			var next_seg_len: float = entries[i + 1].distance_to(exits[i + 1])
-			var tr: float = min(turn_radius_for_route, seg_len * 0.4, next_seg_len * 0.4)
-			tr = max(tr, 2.0)
-			var approach: Vector2 = exits[i] - dirs[i] * tr
-			var leave: Vector2 = entries[i + 1] + dirs[i + 1] * tr
-			if current_pos.distance_to(approach) > 0.5:
-				out.append(LineSeg.new(current_pos, approach))
-			var cross: float = dirs[i].x * dirs[i + 1].y - dirs[i].y * dirs[i + 1].x
-			if abs(cross) < 0.001:
-				out.append(LineSeg.new(approach, leave))
-			else:
-				var delta: Vector2 = leave - approach
-				var t_ctrl: float = (delta.x * dirs[i + 1].y - delta.y * dirs[i + 1].x) / cross
-				var control: Vector2 = approach + dirs[i] * t_ctrl
-				out.append(BezierSeg.new(approach, control, leave))
-			current_pos = leave
-	return out
+	return TrajectoryBuilder.build(graph, route_path, lane_offset, turn_radius_for_route)
 
 
 func _draw_ring(center: Vector2, radius: float, color: Color) -> void:
