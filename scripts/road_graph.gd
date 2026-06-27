@@ -24,7 +24,10 @@ func world_of(key: Vector2i) -> Vector2:
 func neighbors_of(key: Vector2i) -> Array[Vector2i]:
 	if not edges.has(key):
 		return []
-	return edges[key]
+	var result: Array[Vector2i] = []
+	for n in edges[key]:
+		result.append(n)
+	return result
 
 
 func edge_cost(a: Vector2i, b: Vector2i) -> float:
