@@ -15,8 +15,9 @@ var cols: int = 0
 var rows: int = 0
 var block_w: float = 0.0
 var block_h: float = 0.0
-var nodes: Dictionary = {} # Vector2i -> Vector2 world position
-var edges: Dictionary = {} # Vector2i -> Array[Vector2i] (4-neighbourhood)
+var nodes: Dictionary = {}  # Vector2i -> Vector2 world position
+var edges: Dictionary = {}  # Vector2i -> Array[Vector2i] (4-neighbourhood)
+
 
 func generate() -> void:
 	var inner_w: float = screen_size.x - 2.0 * margin_px
@@ -42,15 +43,19 @@ func generate() -> void:
 			if r + 1 < rows:
 				_connect(key, Vector2i(c, r + 1))
 
+
 func world_pos(c: int, r: int) -> Vector2:
 	return Vector2(margin_px + float(c) * block_w, margin_px + float(r) * block_h)
+
 
 func grid_to_world(key: Vector2i) -> Vector2:
 	return nodes[key]
 
+
 func _connect(a: Vector2i, b: Vector2i) -> void:
 	edges[a].append(b)
 	edges[b].append(a)
+
 
 func boundary_nodes() -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
@@ -64,8 +69,10 @@ func boundary_nodes() -> Array[Vector2i]:
 			out.append(Vector2i(cols - 1, r))
 	return out
 
+
 func all_nodes() -> Array:
 	return nodes.keys()
+
 
 func far_from(key: Vector2i, min_distance: int) -> Array[Vector2i]:
 	var out: Array[Vector2i] = []

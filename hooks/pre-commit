@@ -1,0 +1,30 @@
+#!/bin/sh
+# Pre-commit hook: hard-block commit if format-check, lint, or tests fail.
+# Install with: make install-hooks
+
+echo "Running pre-commit checks..."
+
+if ! make format-check; then
+	echo ""
+	echo "COMMIT BLOCKED: Format check failed."
+	echo "Run 'make format' to fix formatting, then re-stage and commit again."
+	exit 1
+fi
+
+if ! make lint; then
+	echo ""
+	echo "COMMIT BLOCKED: Lint check failed."
+	echo "Fix the warnings above, then re-stage and commit again."
+	exit 1
+fi
+
+if ! make test; then
+	echo ""
+	echo "COMMIT BLOCKED: Tests failed."
+	echo "Fix the failing tests, then re-stage and commit again."
+	exit 1
+fi
+
+echo ""
+echo "All pre-commit checks passed."
+exit 0

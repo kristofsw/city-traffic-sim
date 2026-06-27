@@ -4,14 +4,14 @@ extends Node2D
 ## red goal ring) is ALWAYS visible. Press F1 to toggle the raw graph
 ## debug overlay (nodes + edges). F5 regenerates the grid.
 
-const ASPHALT_COLOR := Color(0.168, 0.168, 0.188, 1)      # #2b2b30
-const LANE_MARK_COLOR := Color(0.353, 0.353, 0.392, 1)    # #5a5a64
+const ASPHALT_COLOR := Color(0.168, 0.168, 0.188, 1)  # #2b2b30
+const LANE_MARK_COLOR := Color(0.353, 0.353, 0.392, 1)  # #5a5a64
 const DEBUG_NODE_COLOR := Color(1.0, 0.85, 0.30, 0.9)
 const DEBUG_EDGE_COLOR := Color(0.30, 0.70, 1.0, 0.6)
-const ROUTE_LINE_COLOR := Color(0.50, 0.85, 1.0, 0.40)    # #7fd8ff ~40%
-const ROUTE_START_COLOR := Color(0.50, 1.0, 0.60, 0.9)    # #7fff9a
-const ROUTE_GOAL_COLOR := Color(1.0, 0.50, 0.50, 0.9)     # #ff7f7f
-const ROUTE_RING_INNER := Color(0.168, 0.168, 0.188, 1)   # asphalt core for ring look
+const ROUTE_LINE_COLOR := Color(0.50, 0.85, 1.0, 0.40)  # #7fd8ff ~40%
+const ROUTE_START_COLOR := Color(0.50, 1.0, 0.60, 0.9)  # #7fff9a
+const ROUTE_GOAL_COLOR := Color(1.0, 0.50, 0.50, 0.9)  # #ff7f7f
+const ROUTE_RING_INNER := Color(0.168, 0.168, 0.188, 1)  # asphalt core for ring look
 
 @export var screen_size: Vector2 = Vector2(1280, 720)
 @export var margin_px: float = 40.0
@@ -28,8 +28,10 @@ var route_path: Array[Vector2i] = []
 var route_start: Vector2i = Vector2i.ZERO
 var route_goal: Vector2i = Vector2i.ZERO
 
+
 func _ready() -> void:
 	_regenerate()
+
 
 func _regenerate() -> void:
 	generator = GridGenerator.new()
@@ -42,6 +44,7 @@ func _regenerate() -> void:
 	graph = RoadGraph.new()
 	graph.build(generator)
 	queue_redraw()
+
 
 func _draw() -> void:
 	if graph == null:
@@ -78,6 +81,7 @@ func _draw() -> void:
 		for key in graph.nodes:
 			draw_circle(graph.world_of(key), 4.0, DEBUG_NODE_COLOR)
 
+
 func _draw_route() -> void:
 	if route_path.size() < 2:
 		return
@@ -107,15 +111,21 @@ func _draw_route() -> void:
 	# Start (A) ring: green, on the right lane.
 	_draw_ring(segs[0].position_at(0.0), 10.0, ROUTE_START_COLOR)
 	# Goal (B) ring: red, on the right lane.
-	_draw_ring(segs[segs.size() - 1].position_at(segs[segs.size() - 1].length), 10.0, ROUTE_GOAL_COLOR)
+	_draw_ring(
+		segs[segs.size() - 1].position_at(segs[segs.size() - 1].length), 10.0, ROUTE_GOAL_COLOR
+	)
 
-func _position_on_segments(segs: Array[TrajectorySegment], cum_arc: Array[float], arc: float) -> Vector2:
+
+func _position_on_segments(
+	segs: Array[TrajectorySegment], cum_arc: Array[float], arc: float
+) -> Vector2:
 	# Find the segment containing 'arc' (linear walk; small arrays).
 	var i: int = 0
 	while i < segs.size() - 1 and arc >= cum_arc[i] + segs[i].length:
 		i += 1
 	var local_s: float = arc - cum_arc[i]
 	return segs[i].position_at(local_s)
+
 
 func _build_route_segments() -> Array[TrajectorySegment]:
 	var p: Array[Vector2i] = route_path
@@ -136,7 +146,7 @@ func _build_route_segments() -> Array[TrajectorySegment]:
 		exits.append(b + perp * lane_offset)
 	var current_pos: Vector2 = entries[0]
 	for i in range(p.size() - 1):
-		var is_last: bool = (i == p.size() - 2)
+		var is_last: bool = i == p.size() - 2
 		var has_turn: bool = false
 		if not is_last:
 			has_turn = dirs[i].dot(dirs[i + 1]) < 0.99
@@ -164,11 +174,15 @@ func _build_route_segments() -> Array[TrajectorySegment]:
 			current_pos = leave
 	return out
 
+
 func _draw_ring(center: Vector2, radius: float, color: Color) -> void:
 	draw_circle(center, radius, color)
 	draw_circle(center, radius - 4.0, ROUTE_RING_INNER)
 
-func _draw_dashed_line(from: Vector2, to: Vector2, color: Color, width: float, dash: float, gap: float) -> void:
+
+func _draw_dashed_line(
+	from: Vector2, to: Vector2, color: Color, width: float, dash: float, gap: float
+) -> void:
 	var total: float = from.distance_to(to)
 	if total <= 0.0:
 		return
@@ -181,6 +195,7 @@ func _draw_dashed_line(from: Vector2, to: Vector2, color: Color, width: float, d
 		draw_line(a, b, color, width, true)
 		d += step
 
+
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_F1:
@@ -189,17 +204,21 @@ func _input(event: InputEvent) -> void:
 		elif event.keycode == KEY_F5:
 			_regenerate()
 
+
 func get_graph() -> RoadGraph:
 	return graph
 
+
 func get_generator() -> GridGenerator:
 	return generator
+
 
 func set_route(start: Vector2i, goal: Vector2i, path: Array[Vector2i]) -> void:
 	route_start = start
 	route_goal = goal
 	route_path = path
 	queue_redraw()
+
 
 func clear_route() -> void:
 	route_path = []

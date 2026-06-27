@@ -4,31 +4,38 @@ extends RefCounted
 ## Road graph built from a GridGenerator. Stores intersection world positions
 ## and adjacency, and exposes A* pathfinding over the grid.
 
-var nodes: Dictionary = {} # Vector2i -> Vector2
-var edges: Dictionary = {} # Vector2i -> Array[Vector2i]
+var nodes: Dictionary = {}  # Vector2i -> Vector2
+var edges: Dictionary = {}  # Vector2i -> Array[Vector2i]
+
 
 func build(generator: GridGenerator) -> void:
 	nodes = generator.nodes.duplicate(true)
 	edges = generator.edges.duplicate(true)
 
+
 func has_node(key: Vector2i) -> bool:
 	return nodes.has(key)
 
+
 func world_of(key: Vector2i) -> Vector2:
 	return nodes[key]
+
 
 func neighbors_of(key: Vector2i) -> Array:
 	if not edges.has(key):
 		return []
 	return edges[key]
 
+
 func edge_cost(a: Vector2i, b: Vector2i) -> float:
 	return nodes[a].distance_to(nodes[b])
+
 
 func heuristic(a: Vector2i, b: Vector2i) -> float:
 	var pa: Vector2 = nodes[a]
 	var pb: Vector2 = nodes[b]
 	return abs(pa.x - pb.x) + abs(pa.y - pb.y)
+
 
 ## A* pathfinding. Returns an Array[Vector2i] from start to goal inclusive,
 ## or an empty Array if no path exists.
@@ -67,6 +74,7 @@ func find_path(start: Vector2i, goal: Vector2i) -> Array[Vector2i]:
 				if not open.has(n):
 					open.append(n)
 	return []
+
 
 func _reconstruct(came_from: Dictionary, current: Vector2i) -> Array[Vector2i]:
 	var path: Array[Vector2i] = [current]
