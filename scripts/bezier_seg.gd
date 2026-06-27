@@ -12,6 +12,7 @@ const LUT_SIZE: int = 64
 var p0: Vector2
 var control: Vector2
 var p1: Vector2
+var total_turn_angle: float = 0.0  # cached: total heading change across the arc (rad)
 
 # Arc-length lookup table: cumulative_arc[i] = arc length at t = i/LUT_SIZE.
 var _cumulative_arc: Array[float] = []
@@ -22,6 +23,10 @@ func _init(p_p0: Vector2, p_control: Vector2, p_p1: Vector2) -> void:
 	control = p_control
 	p1 = p_p1
 	_build_arc_length_lut()
+	# Cache the total turn angle for apex-based slowdown.
+	var t0: float = _eval_derivative(0.0).angle()
+	var t1: float = _eval_derivative(1.0).angle()
+	total_turn_angle = abs(_angle_diff(t0, t1))
 
 func _build_arc_length_lut() -> void:
 	_cumulative_arc.clear()
@@ -74,3 +79,15 @@ func position_at(s_local: float) -> Vector2:
 func tangent_at(s_local: float) -> float:
 	var t: float = _t_for_arc(s_local)
 	return _eval_derivative(t).angle()
+
+func curvature_at(s_local: float) -> float:
+	return total_turn_angle
+
+## Smallest absolute angular difference between two angles (radians).
+func _angle_diff(a: float, b: float) -> float:
+	var diff: float = a - b
+	while diff > PI:
+		diff -= TAU
+	while diff < -PI:
+		diff += TAU
+	return diff
