@@ -1,0 +1,11 @@
+[gd_scene load_steps=3 format=3 uid="uid://main0scene"]
+
+[ext_resource type="PackedScene" path="res://scenes/road_grid.tscn" id="1_grid"]
+[ext_resource type="Script" path="res://scripts/simulation_manager.gd" id="2_manager"]
+
+[node name="Main" type="Node2D"]
+
+[node name="RoadGrid" parent="." instance=ExtResource("1_grid")]
+
+[node name="SimulationManager" type="Node2D" parent="."]
+script = ExtResource("2_manager")
