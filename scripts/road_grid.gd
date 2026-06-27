@@ -19,6 +19,7 @@ const ROUTE_RING_INNER := Color(0.168, 0.168, 0.188, 1)   # asphalt core for rin
 @export var road_width: float = 48.0
 @export var lane_width: float = 24.0
 @export var show_debug: bool = false
+@export var lane_offset: float = 12.0  # right-hand lane offset, matches vehicle
 
 var generator: GridGenerator = null
 var graph: RoadGraph = null
@@ -79,15 +80,28 @@ func _draw() -> void:
 func _draw_route() -> void:
 	if route_path.size() < 2:
 		return
-	# Soft cyan polyline through the path's world positions.
-	for i in range(route_path.size() - 1):
-		var a: Vector2 = graph.world_of(route_path[i])
-		var b: Vector2 = graph.world_of(route_path[i + 1])
-		draw_line(a, b, ROUTE_LINE_COLOR, 3.0, true)
-	# Start (A) ring: green.
-	_draw_ring(graph.world_of(route_start), 10.0, ROUTE_START_COLOR)
-	# Goal (B) ring: red.
-	_draw_ring(graph.world_of(route_goal), 10.0, ROUTE_GOAL_COLOR)
+	# Compute the right-hand offset world position for each path node, using
+	# the direction of the segment LEAVING that node (so the route line and the
+	# A/B markers sit on the right lane the vehicle actually drives on).
+	var offset_points: Array[Vector2] = []
+	for i in range(route_path.size()):
+		var key: Vector2i = route_path[i]
+		var p: Vector2 = graph.world_of(key)
+		var dir: Vector2
+		if i < route_path.size() - 1:
+			dir = (graph.world_of(route_path[i + 1]) - p).normalized()
+		else:
+			# Last node: use the direction of the segment that arrived here.
+			dir = (p - graph.world_of(route_path[i - 1])).normalized()
+		var perp: Vector2 = Vector2(-dir.y, dir.x)  # right-hand perpendicular (y-down)
+		offset_points.append(p + perp * lane_offset)
+	# Soft cyan polyline through the offset positions (the right lane).
+	for i in range(offset_points.size() - 1):
+		draw_line(offset_points[i], offset_points[i + 1], ROUTE_LINE_COLOR, 3.0, true)
+	# Start (A) ring: green, on the right lane.
+	_draw_ring(offset_points[0], 10.0, ROUTE_START_COLOR)
+	# Goal (B) ring: red, on the right lane.
+	_draw_ring(offset_points[offset_points.size() - 1], 10.0, ROUTE_GOAL_COLOR)
 
 func _draw_ring(center: Vector2, radius: float, color: Color) -> void:
 	draw_circle(center, radius, color)

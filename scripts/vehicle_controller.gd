@@ -120,10 +120,11 @@ func _build_trajectory(p: Array[Vector2i]) -> Array[Vector2]:
 
 func _process(delta: float) -> void:
 	if graph == null or trajectory.size() < 2 or traj_index >= trajectory.size() - 1:
-		# Check arrival.
+		# Check arrival. Guard BEFORE emit so the post-emit assignment
+		# (which resets traj_index via assign_path) is not overwritten.
 		if trajectory.size() > 0 and traj_index >= trajectory.size() - 1:
+			traj_index = trajectory.size()  # guard against re-emit BEFORE handler runs
 			arrived.emit()
-			traj_index = trajectory.size()  # guard against re-emit
 		return
 
 	var target: Vector2 = trajectory[traj_index + 1]
