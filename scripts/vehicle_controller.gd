@@ -51,63 +51,71 @@ func _build_trajectory(p: Array[Vector2i]) -> Array[Vector2]:
 			out.append(graph.world_of(p[0]))
 		return out
 
-	# Per-segment entry/exit on the right-hand side.
+	# Per-segment data: direction, right-hand perpendicular, entry/exit offsets.
+	var dirs: Array[Vector2] = []
+	var perps: Array[Vector2] = []
 	var entries: Array[Vector2] = []
 	var exits: Array[Vector2] = []
-	var perps: Array[Vector2] = []
 	for i in range(p.size() - 1):
 		var a: Vector2 = graph.world_of(p[i])
 		var b: Vector2 = graph.world_of(p[i + 1])
 		var d: Vector2 = (b - a).normalized()
-		var perp: Vector2 = Vector2(d.y, -d.x)  # right-hand perpendicular (y-down)
+		var perp: Vector2 = Vector2(-d.y, d.x)  # right-hand perpendicular in y-down screen space
+		dirs.append(d)
 		perps.append(perp)
 		entries.append(a + perp * lane_offset)
 		exits.append(b + perp * lane_offset)
 
-	# Assemble: straight(entry -> approach) + bezier(approach -> leave) + straight(leave -> exit)
-	for i in range(p.size() - 1):
-		var entry: Vector2 = entries[i]
-		var exit: Vector2 = exits[i]
-		var seg_len: float = entry.distance_to(exit)
+	# Build a continuous trajectory: alternating straight portions and bezier
+	# arcs at intersections. The car never leaves the right-hand side because
+	# every waypoint is offset by its segment's right-hand perpendicular.
+	var current_pos: Vector2 = entries[0]
+	out.append(current_pos)
 
-		if i < p.size() - 2:
-			# Straight portion up to 'approach' (pulled back by turn_radius from exit).
-			var approach: Vector2 = exit - (exit - entry).normalized() * turn_radius
-			if entry.distance_to(approach) > arrival_radius:
-				out.append(entry)
-				if approach.distance_to(entry) > turn_radius:
-					out.append(approach)
-				else:
-					out.append(exit)  # segment too short; just go to exit
-			else:
-				out.append(entry)
-			# Bezier from approach to next segment's 'leave' point.
-			var next_perp: Vector2 = perps[i + 1]
-			var next_entry: Vector2 = entries[i + 1]
-			var leave: Vector2 = next_entry + (next_entry - exits[i + 1]).normalized() * turn_radius
-			# Control point: the right-hand corner of the intersection = intersection
-			# center offset by perp of the CURRENT segment (keeps arc on the right
-			# side as the car enters the turn) -- this yields a smooth tangent handoff.
-			var center: Vector2 = graph.world_of(p[i + 1])
-			var control: Vector2 = center + perps[i] * lane_offset
-			# If the next segment is straight-on (same direction), skip the arc.
-			var cur_dir: Vector2 = (graph.world_of(p[i + 1]) - graph.world_of(p[i])).normalized()
-			var nxt_dir: Vector2 = (graph.world_of(p[i + 2]) - graph.world_of(p[i + 1])).normalized()
-			if cur_dir.dot(nxt_dir) > 0.99:
-				# No turn; just continue straight through.
-				out.append(exit)
-			else:
-				# Sample the quadratic bezier: B(t) = (1-t)^2 P0 + 2(1-t)t C + t^2 P1
-				var p0: Vector2 = approach if approach.distance_to(entry) > turn_radius else exit
-				var p1: Vector2 = leave
-				for s in range(1, bezier_samples + 1):
-					var t: float = float(s) / float(bezier_samples)
-					var pt: Vector2 = p0.lerp(control, t).lerp(control.lerp(p1, t), t)
-					out.append(pt)
+	for i in range(p.size() - 1):
+		var is_last: bool = (i == p.size() - 2)
+		var has_turn: bool = false
+		if not is_last:
+			has_turn = dirs[i].dot(dirs[i + 1]) < 0.99
+
+		if is_last or not has_turn:
+			# Straight through to the exit of this segment.
+			if current_pos.distance_to(exits[i]) > 1.0:
+				out.append(exits[i])
+			current_pos = exits[i]
 		else:
-			# Last segment: straight to the destination exit point.
-			out.append(entry)
-			out.append(exit)
+			# Turn: straight to approach point, then bezier arc to leave point.
+			var seg_len: float = entries[i].distance_to(exits[i])
+			var next_seg_len: float = entries[i + 1].distance_to(exits[i + 1])
+			var tr: float = min(turn_radius, seg_len * 0.4, next_seg_len * 0.4)
+			tr = max(tr, 2.0)
+
+			var approach: Vector2 = exits[i] - dirs[i] * tr
+			var leave: Vector2 = entries[i + 1] + dirs[i + 1] * tr
+
+			# Straight portion: current_pos -> approach
+			if current_pos.distance_to(approach) > 1.0:
+				out.append(approach)
+
+			# Bezier control point: intersection of the two offset tangent lines.
+			# Line 1: through approach, direction dirs[i]
+			# Line 2: through leave, direction dirs[i+1]
+			# This produces a G1-continuous arc with correct tangents on both sides.
+			var cross: float = dirs[i].x * dirs[i + 1].y - dirs[i].y * dirs[i + 1].x
+			if abs(cross) < 0.001:
+				# Near-parallel fallback (shouldn't happen for real turns).
+				out.append(leave)
+			else:
+				var delta: Vector2 = leave - approach
+				var t_ctrl: float = (delta.x * dirs[i + 1].y - delta.y * dirs[i + 1].x) / cross
+				var control: Vector2 = approach + dirs[i] * t_ctrl
+				# Sample quadratic bezier: B(t) = (1-t)^2 P0 + 2(1-t)t C + t^2 P1
+				for s in range(1, bezier_samples + 1):
+					var bt: float = float(s) / float(bezier_samples)
+					var pt: Vector2 = approach.lerp(control, bt).lerp(control.lerp(leave, bt), bt)
+					out.append(pt)
+
+			current_pos = leave
 	return out
 
 func _process(delta: float) -> void:
@@ -178,7 +186,7 @@ func _signed_lane_offset() -> float:
 	var a: Vector2 = graph.world_of(path[best_i])
 	var b: Vector2 = graph.world_of(path[best_i + 1])
 	var d: Vector2 = (b - a).normalized()
-	var perp: Vector2 = Vector2(d.y, -d.x)  # right-hand
+	var perp: Vector2 = Vector2(-d.y, d.x)  # right-hand perpendicular (y-down screen space)
 	return (position_on_road - a).dot(perp)
 
 func _draw() -> void:
