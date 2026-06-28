@@ -33,15 +33,15 @@ func boundary_nodes() -> Array[Vector2i]:
 
 
 ## All node keys. Default works for any generator using Vector2i keys.
-func all_nodes() -> Array[Vector2i]:
+func all_nodes() -> Array:
 	return nodes.keys()
 
 
 ## Nodes at least `min_distance` (Manhattan, on Vector2i keys) from `key`.
 ## Default works for any grid using Vector2i keys; subclasses with
 ## non-gridded topologies should override with an appropriate metric.
-func far_from(key: Vector2i, min_distance: int) -> Array[Vector2i]:
-	var out: Array[Vector2i] = []
+func far_from(key: Vector2i, min_distance: int) -> Array:
+	var out: Array = []
 	for k in nodes.keys():
 		if abs(k.x - key.x) + abs(k.y - key.y) >= min_distance:
 			out.append(k)

@@ -1,8 +1,10 @@
 class_name SimulationManager
 extends Node2D
 ## Coordinates spawning, pathing, and lifecycle of vehicles.
-## Phase 2/3: spawns a single vehicle, assigns an A* path, and repaths to a
-## new random destination whenever the vehicle arrives.
+## Owns a VehicleSpawner (RefCounted) that encapsulates spawn/repath policy;
+## this manager only wires the spawner's signals to RoadGrid route viz and
+## keeps the Array[VehicleController]. Structured for N vehicles (Phase 5):
+## increase `spawn_count` and the spawner handles the rest.
 ##
 ## The RoadGrid dependency is injected by the Main entry-point node (see
 ## main.gd) via the `road_grid` export, not via a hardcoded sibling string
@@ -12,8 +14,10 @@ extends Node2D
 const VehicleScene := preload("res://scenes/vehicle.tscn")
 
 @export var road_grid: RoadGrid = null
+@export var spawn_count: int = 1  # number of vehicles to spawn at startup
 
-var vehicle: VehicleController = null
+var vehicles: Array[VehicleController] = []
+var spawner: VehicleSpawner = null
 var rng := RandomNumberGenerator.new()
 
 
@@ -39,38 +43,40 @@ func _ready() -> void:
 			% [road_grid.generator.nodes.size(), road_grid.generator.edges.size()]
 		)
 	)
-	_spawn_initial_vehicle()
+	_setup_spawner()
+	_spawn_initial_vehicles()
 
 
-func _spawn_initial_vehicle() -> void:
-	var graph: RoadGraph = road_grid.get_graph()
-	var boundary: Array[Vector2i] = road_grid.get_generator().boundary_nodes()
-	if boundary.is_empty():
-		printerr("[SimulationManager] no boundary nodes to spawn at")
-		return
-	var start: Vector2i = boundary[rng.randi() % boundary.size()]
-	vehicle = VehicleScene.instantiate() as VehicleController
-	vehicle.graph = graph
-	add_child(vehicle)
-	vehicle.arrived.connect(_on_vehicle_arrived)
-	_assign_new_path_from(start)
+func _setup_spawner() -> void:
+	spawner = VehicleSpawner.new()
+	spawner.vehicle_scene = VehicleScene
+	spawner.graph = road_grid.get_graph()
+	spawner.generator = road_grid.get_generator()
+	spawner.rng = rng
+	# The spawner emits path assignments; we forward them to RoadGrid so the
+	# route viz stays in sync without the spawner knowing about RoadGrid.
+	spawner.vehicle_path_assigned.connect(_on_vehicle_path_assigned)
 
 
-func _assign_new_path_from(current: Vector2i) -> void:
-	var graph: RoadGraph = road_grid.get_graph()
-	var candidates: Array[Vector2i] = road_grid.get_generator().far_from(current, 6)
-	if candidates.is_empty():
-		candidates = road_grid.get_generator().all_nodes()
-	var goal: Vector2i = candidates[rng.randi() % candidates.size()]
-	var p: Array[Vector2i] = graph.find_path(current, goal)
-	if p.is_empty():
-		printerr("[SimulationManager] no path %s -> %s" % [current, goal])
-		return
-	vehicle.assign_path(p)
-	road_grid.set_route(current, goal, p)
-	print("[SimulationManager] path %s -> %s (%d hops)" % [current, goal, p.size()])
+func _spawn_initial_vehicles() -> void:
+	for i in range(spawn_count):
+		var v: VehicleController = spawner.spawn(self, _on_vehicle_arrived)
+		vehicles.append(v)
 
 
-func _on_vehicle_arrived() -> void:
-	var last: Vector2i = vehicle.path[vehicle.path.size() - 1]
-	_assign_new_path_from(last)
+## Called when any vehicle arrives; the spawner repaths it from its last
+## node. The vehicle is bound into the Callable by the spawner so the
+## handler knows WHICH vehicle emitted the signal (multi-vehicle safe).
+func _on_vehicle_arrived(vehicle: VehicleController) -> void:
+	spawner.repath(vehicle)
+
+
+## Forward a spawner path assignment to RoadGrid route viz. Only the most
+## recent assignment drives the visible route line (single-vehicle behavior
+## preserved; for multi-vehicle, RoadGrid.set_route would need to draw N
+## routes -- a Phase 5 concern).
+func _on_vehicle_path_assigned(
+	_vehicle: VehicleController, start: Vector2i, goal: Vector2i, path: Array[Vector2i]
+) -> void:
+	road_grid.set_route(start, goal, path)
+	print("[SimulationManager] path %s -> %s (%d hops)" % [start, goal, path.size()])
