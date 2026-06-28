@@ -1,6 +1,11 @@
-[gd_scene format=3 uid="uid://b2f5ebsqyb0uk"]
+[gd_scene load_steps=5 format=3 uid="uid://b2f5ebsqyb0uk"]
 
 [ext_resource type="Script" uid="uid://b8vgypjtd8rxp" path="res://scripts/vehicle_controller.gd" id="1_vehicle"]
+[ext_resource type="Script" uid="uid://da5o3utvmr2io" path="res://scripts/vehicle_body.gd" id="2_body"]
+[ext_resource type="Script" uid="uid://e60o5wtcm1ja" path="res://scripts/circle_drawer.gd" id="3_circle"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_1"]
+size = Vector2(36, 18)
 
 [node name="Vehicle" type="Node2D" unique_id=720955194]
 script = ExtResource("1_vehicle")
@@ -9,3 +14,32 @@ decel_rate = 120.0
 decel_distance = 90.0
 min_turn_speed_ratio = 0.3
 turn_look_ahead = 50.0
+
+[node name="Body" type="Node2D" parent="."]
+script = ExtResource("2_body")
+
+[node name="BodyShape" type="Polygon2D" parent="Body"]
+
+[node name="HeadlightL" type="Node2D" parent="Body"]
+script = ExtResource("3_circle")
+
+[node name="HeadlightR" type="Node2D" parent="Body"]
+script = ExtResource("3_circle")
+
+[node name="TaillightL" type="Node2D" parent="Body"]
+script = ExtResource("3_circle")
+
+[node name="TaillightR" type="Node2D" parent="Body"]
+script = ExtResource("3_circle")
+
+[node name="IndicatorFL" type="Node2D" parent="Body"]
+script = ExtResource("3_circle")
+
+[node name="IndicatorFR" type="Node2D" parent="Body"]
+script = ExtResource("3_circle")
+
+[node name="IndicatorRL" type="Node2D" parent="Body"]
+script = ExtResource("3_circle")
+
+[node name="IndicatorRR" type="Node2D" parent="Body"]
+script = ExtResource("3_circle")
