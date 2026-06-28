@@ -26,18 +26,68 @@ const INDICATOR_BLINK_PERIOD := 0.4  # seconds (0.2s on / 0.2s off)
 const COAST_DOWN_GLOW := 0.25  # taillight intensity while coasting down
 const HOLD_STILL_GLOW := 1.0  # taillight intensity while stopped at zero target
 
-# Motion tuning. Kept as plain vars here; Step 3 moves them into a
-# VehicleSpec Resource that the controller injects. The mover reads them
-# directly so its pure methods stay testable without a Node.
-var max_speed: float = 80.0  # px/s (cruising speed)
-var accel_rate: float = 90.0  # px/s^2 (acceleration, gentle)
-var decel_rate: float = 130.0  # px/s^2 (braking, gentle)
-var decel_distance: float = 120.0  # px before destination to start braking
-var turn_slowdown_factor: float = 0.5  # speed reduction per radian of turn
-var min_turn_speed_ratio: float = 0.25  # never slower than this fraction in a turn
-var turn_look_ahead: float = 60.0  # px; look ahead for upcoming turns
-var snap_distance: float = 5.0  # px; snap to arrival when this close
-var snap_speed_threshold: float = 15.0  # px/s; below this, snap to arrival
+# Convenience accessors read/write through the spec so call sites stay short
+# and the spec remains the single source of truth. Tests can set these
+# directly (a default spec is created on first access).
+var max_speed: float:
+	get:
+		return _ensure_spec().max_speed
+	set(v):
+		_ensure_spec().max_speed = v
+
+var accel_rate: float:
+	get:
+		return _ensure_spec().accel_rate
+	set(v):
+		_ensure_spec().accel_rate = v
+
+var decel_rate: float:
+	get:
+		return _ensure_spec().decel_rate
+	set(v):
+		_ensure_spec().decel_rate = v
+
+var decel_distance: float:
+	get:
+		return _ensure_spec().decel_distance
+	set(v):
+		_ensure_spec().decel_distance = v
+
+var turn_slowdown_factor: float:
+	get:
+		return _ensure_spec().turn_slowdown_factor
+	set(v):
+		_ensure_spec().turn_slowdown_factor = v
+
+var min_turn_speed_ratio: float:
+	get:
+		return _ensure_spec().min_turn_speed_ratio
+	set(v):
+		_ensure_spec().min_turn_speed_ratio = v
+
+var turn_look_ahead: float:
+	get:
+		return _ensure_spec().turn_look_ahead
+	set(v):
+		_ensure_spec().turn_look_ahead = v
+
+var snap_distance: float:
+	get:
+		return _ensure_spec().snap_distance
+	set(v):
+		_ensure_spec().snap_distance = v
+
+var snap_speed_threshold: float:
+	get:
+		return _ensure_spec().snap_speed_threshold
+	set(v):
+		_ensure_spec().snap_speed_threshold = v
+
+# Motion spec (injected by the controller). When null, the mover falls back
+# to a built-in default spec so the pure methods remain testable without a
+# Node. Fields are read through the spec so a single VehicleSpec Resource is
+# the source of truth for all tuning.
+var spec: VehicleSpec = null
 
 var graph: RoadGraph = null
 var path: Array[Vector2i] = []
@@ -56,6 +106,22 @@ var _eff_decel: float = 0.0  # clamped decel distance for current trip
 var _arrived_emitted: bool = false
 var _last_braking: float = 0.0
 var _last_turn_dir: int = 0
+var _default_spec: VehicleSpec = null  # lazily created for spec-less tests
+
+
+## Apply a VehicleSpec to this mover. The controller calls this on _ready.
+## Tests can also call it directly; if not called, a default spec is used.
+func apply_spec(p_spec: VehicleSpec) -> void:
+	spec = p_spec
+
+
+## Lazy default spec so pure methods work without explicit injection.
+func _ensure_spec() -> VehicleSpec:
+	if spec != null:
+		return spec
+	if _default_spec == null:
+		_default_spec = VehicleSpec.new()
+	return _default_spec
 
 
 func assign_path(new_path: Array[Vector2i], lane_offset: float, turn_radius: float) -> void:

@@ -8,34 +8,26 @@ extends Node2D
 ## without re-implementing any motion logic.
 ##
 ## The body never reads the trajectory or computes speed -- it only reacts
-## to mover signals (position_changed, braking_changed,
-## turn_indicator_changed) and the blink phase. Per Godot best practices,
+## to mover signals (braking_changed, turn_indicator_changed) and the blink
+## phase. All visual config (colors, sizes, body dimensions) comes from a
+## VehicleSpec Resource injected via apply_spec. Per Godot best practices,
 ## the scene is self-contained: all visual assets are child nodes, no
 ## external dependencies, no hardcoded paths.
 
-const BODY_COLOR := Color(0.42, 0.45, 0.50, 1)  # #6b7280 muted gray-blue
-const HEADLIGHT_COLOR := Color(1.0, 0.96, 0.84, 1)  # #fff4d6
-const TAILLIGHT_COLOR := Color(1.0, 0.35, 0.30, 1)  # #ff5a4d
-const INDICATOR_COLOR := Color(1.0, 0.6, 0.15, 1)  # #ff9926 amber
-const TAILLIGHT_BASE_ALPHA := 0.35  # resting taillight visibility
-const TAILLIGHT_BRAKE_RADIUS := 1.8  # base radius (grows with braking)
-const TAILLIGHT_BRAKE_RADIUS_GAIN := 1.5  # radius added at full brake
-const INDICATOR_RADIUS := 2.5
-const HEADLIGHT_RADIUS := 2.2
-
-# Body dimensions. Step 3 moves these into a VehicleSpec Resource.
-var body_length: float = 36.0
-var body_width: float = 18.0
+# Visual spec (injected by the controller). When null, falls back to a
+# default VehicleSpec so the body renders even without explicit injection.
+var spec: VehicleSpec = null
 
 # Current visual state (driven by mover signals).
 var _braking: float = 0.0
 var _turn_dir: int = 0
 var _blink_phase: float = 0.0
-var _blink_period: float = 0.4  # must match VehicleMover.INDICATOR_BLINK_PERIOD
+var _blink_period: float = 0.4  # updated from spec via apply_spec
 
 # Mover reference (optional): when set, the body drives its own blink phase
 # from the mover's so indicators blink in sync with the motion update.
 var _mover: VehicleMover = null
+var _default_spec: VehicleSpec = null
 
 # Child nodes (assigned in _ready; the .tscn defines them).
 @onready var _body: Polygon2D = $BodyShape
@@ -50,10 +42,22 @@ var _mover: VehicleMover = null
 
 
 func _ready() -> void:
+	_ensure_spec()
 	_build_body_polygon()
 	_layout_lights()
 	_apply_colors()
 	_set_indicators_visible(false)
+
+
+## Apply a VehicleSpec to this body. The controller calls this on _ready.
+func apply_spec(p_spec: VehicleSpec) -> void:
+	spec = p_spec
+	_blink_period = p_spec.indicator_blink_period
+	# Rebuild visuals if already in the tree (child nodes available).
+	if _body != null:
+		_build_body_polygon()
+		_layout_lights()
+		_apply_colors()
 
 
 ## Bind this body to a mover. The body subscribes to the mover's signals
@@ -75,9 +79,10 @@ func set_blink_phase(phase: float) -> void:
 
 func _on_braking_changed(intensity: float) -> void:
 	_braking = intensity
-	var radius: float = TAILLIGHT_BRAKE_RADIUS + intensity * TAILLIGHT_BRAKE_RADIUS_GAIN
-	var alpha: float = TAILLIGHT_BASE_ALPHA + intensity * (1.0 - TAILLIGHT_BASE_ALPHA)
-	var col := Color(TAILLIGHT_COLOR.r, TAILLIGHT_COLOR.g, TAILLIGHT_COLOR.b, alpha)
+	var s: VehicleSpec = _ensure_spec()
+	var radius: float = s.taillight_base_radius + intensity * s.taillight_brake_radius_gain
+	var alpha: float = s.taillight_base_alpha + intensity * (1.0 - s.taillight_base_alpha)
+	var col := Color(s.taillight_color.r, s.taillight_color.g, s.taillight_color.b, alpha)
 	_taillight_l.set_circle(radius, col)
 	_taillight_r.set_circle(radius, col)
 
@@ -109,18 +114,29 @@ func _set_indicators_visible(vis: bool) -> void:
 	_indicator_rr.visible = vis
 
 
+func _ensure_spec() -> VehicleSpec:
+	if spec != null:
+		return spec
+	if _default_spec == null:
+		_default_spec = VehicleSpec.new()
+		_blink_period = _default_spec.indicator_blink_period
+	return _default_spec
+
+
 func _build_body_polygon() -> void:
-	var w: float = body_width * 0.5
-	var l: float = body_length * 0.5
+	var s: VehicleSpec = _ensure_spec()
+	var w: float = s.body_width * 0.5
+	var l: float = s.body_length * 0.5
 	_body.polygon = PackedVector2Array(
 		[Vector2(-l, -w), Vector2(l, -w), Vector2(l, w), Vector2(-l, w)]
 	)
-	_body.color = BODY_COLOR
+	_body.color = s.body_color
 
 
 func _layout_lights() -> void:
-	var l: float = body_length * 0.5
-	var w: float = body_width * 0.3
+	var s: VehicleSpec = _ensure_spec()
+	var l: float = s.body_length * 0.5
+	var w: float = s.body_width * 0.3
 	# Front edge headlights.
 	_headlight_l.position = Vector2(l, -w)
 	_headlight_r.position = Vector2(l, w)
@@ -128,7 +144,7 @@ func _layout_lights() -> void:
 	_taillight_l.position = Vector2(-l, -w)
 	_taillight_r.position = Vector2(-l, w)
 	# Corner indicators.
-	var hw: float = body_width * 0.5
+	var hw: float = s.body_width * 0.5
 	_indicator_fl.position = Vector2(l, -hw)
 	_indicator_fr.position = Vector2(l, hw)
 	_indicator_rl.position = Vector2(-l, -hw)
@@ -136,11 +152,12 @@ func _layout_lights() -> void:
 
 
 func _apply_colors() -> void:
-	_headlight_l.set_circle(HEADLIGHT_RADIUS, HEADLIGHT_COLOR)
-	_headlight_r.set_circle(HEADLIGHT_RADIUS, HEADLIGHT_COLOR)
-	_indicator_fl.set_circle(INDICATOR_RADIUS, INDICATOR_COLOR)
-	_indicator_fr.set_circle(INDICATOR_RADIUS, INDICATOR_COLOR)
-	_indicator_rl.set_circle(INDICATOR_RADIUS, INDICATOR_COLOR)
-	_indicator_rr.set_circle(INDICATOR_RADIUS, INDICATOR_COLOR)
+	var s: VehicleSpec = _ensure_spec()
+	_headlight_l.set_circle(s.headlight_radius, s.headlight_color)
+	_headlight_r.set_circle(s.headlight_radius, s.headlight_color)
+	_indicator_fl.set_circle(s.indicator_radius, s.indicator_color)
+	_indicator_fr.set_circle(s.indicator_radius, s.indicator_color)
+	_indicator_rl.set_circle(s.indicator_radius, s.indicator_color)
+	_indicator_rr.set_circle(s.indicator_radius, s.indicator_color)
 	# Taillights set by _on_braking_changed; initialize at rest.
 	_on_braking_changed(0.0)
