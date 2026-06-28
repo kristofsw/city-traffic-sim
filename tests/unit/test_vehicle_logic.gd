@@ -191,14 +191,91 @@ func test_windowed_factor_monotonic_accel_out() -> void:
 		s += 5.0
 
 
-## Build a LineSeg (100px) followed by a 90-degree BezierSeg arc and wire up
-## the vehicle's segment bookkeeping (segments, seg_start_arc, total_length).
+## Build a LineSeg (100px) followed by a 90-degree right-turn BezierSeg arc
+## and wire up the vehicle's segment bookkeeping (segments, seg_start_arc,
+## total_length). The bezier goes right then down (clockwise in y-down screen
+## space) -> turn_direction() == +1, total_turn_angle ~ PI/2.
 func _setup_line_then_bezier(vc: VehicleController) -> void:
 	var line := LineSeg.new(Vector2(0, 0), Vector2(100, 0))
-	# A 90-degree arc: from (100,0) bending to end at (100,100), control at (100,0)
-	# gives a sharp corner-like quadratic; for a smoother quarter circle use a
-	# control point at (200,0) so the arc bulges right then up.
-	var bez := BezierSeg.new(Vector2(100, 0), Vector2(100, 100), Vector2(100, 100))
+	# Right turn: p0=(100,0), control=(150,0) [entry tangent right], p1=(150,50)
+	# [exit tangent down]. cross((50,0),(0,50)) = 2500 > 0 -> right (+1).
+	var bez := BezierSeg.new(Vector2(100, 0), Vector2(150, 0), Vector2(150, 50))
 	vc.segments = [line, bez]
 	vc.seg_start_arc = [0.0, line.length]
 	vc.total_length = line.length + bez.length
+
+
+func test_braking_intensity_coast_down_glow() -> void:
+	var vc := VehicleController.new()
+	autofree(vc)
+	vc.max_speed = 80.0
+	_setup_line_then_bezier(vc)
+	# Coasting down: speed == target (no overshoot) but the rate-limiter is
+	# subtracting this frame -> gentle glow, not zero.
+	vc.current_speed = 50.0
+	vc._decelerating = true
+	# Place s where target is below current_speed so the coast-down branch is
+	# the one taken: set target by choosing s near the end ramp. Simpler: set
+	# current_speed == target by picking s on the line (target == max_speed)
+	# and current_speed == max_speed with _decelerating true.
+	vc.s = 0.0
+	vc.current_speed = vc.max_speed  # == target on the line at s=0
+	var intensity: float = vc._braking_intensity()
+	assert_almost_eq(
+		intensity, vc.COAST_DOWN_GLOW, 0.001, "coast-down should glow at COAST_DOWN_GLOW"
+	)
+
+
+func test_braking_intensity_zero_when_accelerating() -> void:
+	var vc := VehicleController.new()
+	autofree(vc)
+	vc.max_speed = 80.0
+	_setup_line_then_bezier(vc)
+	# Accelerating: speed <= target and NOT decelerating -> 0.0.
+	vc.s = 0.0
+	vc.current_speed = 40.0  # below target (max_speed on the line)
+	vc._decelerating = false
+	assert_eq(vc._braking_intensity(), 0.0, "braking intensity should be 0 when accelerating")
+
+
+func test_upcoming_turn_direction_before_turn() -> void:
+	var vc := VehicleController.new()
+	autofree(vc)
+	vc.turn_look_ahead = 60.0
+	_setup_line_then_bezier(vc)
+	# On the line, 20px before the arc, the bezier is within the look-ahead
+	# window -> direction should be the bezier's (right, +1), not 0.
+	var s: float = vc.seg_start_arc[1] - 20.0
+	assert_eq(
+		vc._upcoming_turn_direction(s),
+		1,
+		"should report the upcoming right turn before entering the arc"
+	)
+
+
+func test_upcoming_turn_direction_no_turn_in_window() -> void:
+	var vc := VehicleController.new()
+	autofree(vc)
+	vc.turn_look_ahead = 10.0  # small window so the arc is out of range
+	_setup_line_then_bezier(vc)
+	# At the start of the line, with a 10px window, the bezier (100px ahead)
+	# is outside -> 0.
+	assert_eq(
+		vc._upcoming_turn_direction(0.0),
+		0,
+		"should report no turn when the arc is outside the look-ahead window"
+	)
+
+
+func test_upcoming_turn_direction_inside_arc() -> void:
+	var vc := VehicleController.new()
+	autofree(vc)
+	vc.turn_look_ahead = 60.0
+	_setup_line_then_bezier(vc)
+	# At the apex of the bezier itself, the segment overlaps the window -> +1.
+	var apex_s: float = vc.seg_start_arc[1] + vc.segments[1].length / 2.0
+	assert_eq(
+		vc._upcoming_turn_direction(apex_s),
+		1,
+		"should report the turn direction while inside the arc"
+	)

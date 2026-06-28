@@ -8,8 +8,9 @@ A minimalist, top-down city traffic simulation built in Godot 4.7, designed as a
 - **A\* pathfinding** — continuous A→B routing over the grid graph with Manhattan-distance heuristic; vehicles repath to a new random destination on every arrival.
 - **Arc-length bezier turns** — turns through intersections are quadratic bezier arcs, G1-continuous with the incoming/outgoing straights, so position and heading stay perfectly coupled.
 - **Right-hand lane following** — all trajectories are offset to the right-hand lane; the car never enters oncoming traffic.
-- **Acceleration / deceleration** — S-curve ramp up from standstill, smoothstep deceleration to stop at the destination, and apex-based slowdown through turns (slowest in the middle of each arc).
-- **Brake lights** — taillights brighten in proportion to braking intensity.
+- **Acceleration / deceleration** — S-curve ramp up from standstill, smoothstep deceleration to stop at the destination, and apex-based slowdown through turns (slowest in the middle of each arc), with a windowed look-ahead so the car brakes before the turn and sustains the corner speed.
+- **Brake lights** — taillights brighten in proportion to braking intensity, and glow gently whenever the car eases off (coasts down toward a lower target), not only under hard braking.
+- **Turn indicators** — amber blinkers at the corners on the turning side fire 0.2s on / 0.2s off as soon as a turn enters the look-ahead window (while the car is already decelerating toward it) and cancel once the turn leaves the window.
 - **Always-on route visualization** — soft cyan route line plus green start (A) and red goal (B) rings, drawn on the same right-lane offset trajectory the vehicle follows.
 - **Debug overlay** — F1 toggles raw graph nodes/edges; F5 regenerates the grid.
 
@@ -136,6 +137,7 @@ make test
 | Vehicle body | `#6b7280` |
 | Headlights | `#fff4d6` |
 | Taillights | `#ff5a4d` |
+| Turn indicators | `#ff9926` (amber, blinking) |
 | Route line | `#7fd8ff` (~40% alpha) |
 | Start (A) ring | `#7fff9a` |
 | Goal (B) ring | `#ff7f7f` |

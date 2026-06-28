@@ -90,3 +90,13 @@ func tangent_at(s_local: float) -> float:
 
 func curvature_at(_s_local: float) -> float:
 	return total_turn_angle
+
+
+## Signed turn direction: sign of cross(control - p0, p1 - control).
+## In y-down screen space, cross > 0 (clockwise visually) = right turn (+1),
+## cross < 0 (counter-clockwise visually) = left turn (-1), 0 = straight.
+func turn_direction() -> int:
+	var a: Vector2 = control - p0
+	var b: Vector2 = p1 - control
+	var cross: float = a.x * b.y - a.y * b.x
+	return sign(cross)

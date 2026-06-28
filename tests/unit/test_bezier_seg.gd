@@ -95,3 +95,17 @@ func test_progress_fraction_monotonic() -> void:
 		var progress := seg.progress_fraction(s)
 		assert_gte(progress, prev_progress, "progress_fraction should be monotonically increasing")
 		prev_progress = progress
+
+
+func test_turn_direction_right() -> void:
+	# A right turn in y-down screen space (clockwise visually): go right then
+	# down. cross(control - p0, p1 - control) > 0 -> +1.
+	var seg := BezierSeg.new(Vector2(0, 0), Vector2(50, 0), Vector2(50, 50))
+	assert_eq(seg.turn_direction(), 1, "right turn (right then down) should be +1")
+
+
+func test_turn_direction_left() -> void:
+	# A left turn in y-down screen space (counter-clockwise visually): go right
+	# then up. cross(control - p0, p1 - control) < 0 -> -1.
+	var seg := BezierSeg.new(Vector2(0, 0), Vector2(50, 0), Vector2(50, -50))
+	assert_eq(seg.turn_direction(), -1, "left turn (right then up) should be -1")

@@ -17,6 +17,9 @@ signal arrived
 const BODY_COLOR := Color(0.42, 0.45, 0.50, 1)  # #6b7280 muted gray-blue
 const HEADLIGHT_COLOR := Color(1.0, 0.96, 0.84, 1)  # #fff4d6
 const TAILLIGHT_COLOR := Color(1.0, 0.35, 0.30, 1)  # #ff5a4d
+const INDICATOR_COLOR := Color(1.0, 0.6, 0.15, 1)  # #ff9926 amber turn signal
+const INDICATOR_BLINK_PERIOD := 0.4  # seconds (0.2s on / 0.2s off)
+const COAST_DOWN_GLOW := 0.25  # taillight intensity while coasting down
 
 @export var max_speed: float = 80.0  # px/s (cruising speed)
 @export var accel_rate: float = 90.0  # px/s^2 (acceleration, gentle)
@@ -41,6 +44,8 @@ var seg_index: int = 0  # cached current segment index
 var heading: float = 0.0
 var position_on_road: Vector2 = Vector2.ZERO
 var current_speed: float = 0.0  # actual speed (px/s), rate-limited toward target
+var _decelerating: bool = false  # true the frame the rate-limiter subtracts speed
+var _blink_phase: float = 0.0  # accumulator for indicator blink cadence
 var _current_segment_key: Vector2i = Vector2i.ZERO
 var _eff_decel: float = 0.0  # clamped decel distance for current trip
 
@@ -84,13 +89,21 @@ func _process(delta: float) -> void:
 	var target: float = _target_speed_at(s)
 
 	# Smoothly approach target speed (rate-limited -> no jerk).
+	# Track whether we are decelerating this frame so the taillights can glow
+	# during coast-down (speed easing toward a lower target), not only during
+	# hard braking (speed above target).
 	if current_speed < target:
 		current_speed = min(current_speed + accel_rate * delta, target)
+		_decelerating = false
 	else:
 		current_speed = max(current_speed - decel_rate * delta, target)
+		_decelerating = true
 
 	# Advance arc length by actual speed * delta.
 	s += current_speed * delta
+
+	# Indicator blink phase accumulator (runs always so the cadence is stable).
+	_blink_phase += delta
 
 	# Snap-to-arrival safeguard: prevent hovering at near-zero speed.
 	var dist_to_end_arc: float = total_length - s
@@ -265,17 +278,48 @@ func _signed_lane_offset() -> float:
 	return (position_on_road - a).dot(perp)
 
 
-## Braking intensity for taillight visual (0 = not braking, 1 = hard braking).
+## Braking intensity for taillight visual (0 = coasting/free, 1 = hard brake).
+## Two regimes:
+## - Hard braking (speed > target): proportional ramp up to 1.0, scaled by
+##   max_speed so a modest overshoot fully lights the brakes.
+## - Coast-down (speed <= target but decelerating this frame): a gentle glow
+##   (COAST_DOWN_GLOW) so the taillights visibly lift whenever the car eases
+##   off toward a lower target -- e.g. before a turn or a stop -- not only
+##   when actively braking hard.
 func _braking_intensity() -> float:
 	if segments.is_empty() or s >= total_length:
 		return 0.0
 	var target: float = _target_speed_at(s)
-	if current_speed <= target:
-		return 0.0
-	# Denominator scales with max_speed so a modest overshoot lights the
-	# brakes fully -- previously decel_rate*0.1 was too large a denominator,
-	# so the rate-limited current_speed rarely overshot enough to register.
-	return clamp((current_speed - target) / (max_speed * 0.2), 0.0, 1.0)
+	if current_speed > target:
+		return clamp((current_speed - target) / (max_speed * 0.2), 0.0, 1.0)
+	if _decelerating:
+		return COAST_DOWN_GLOW
+	return 0.0
+
+
+## Signed direction of the next turn within the look-ahead window
+## [s_pos, s_pos + turn_look_ahead]: -1 = left, +1 = right, 0 = none.
+## Uses the same window as the speed model so indicators fire the moment the
+## car begins decelerating toward an upcoming turn, and cancel once the turn
+## leaves the window. Returns the direction of the FIRST turn in the window
+## (the next one the car will take). Pure, side-effect free for testability.
+func _upcoming_turn_direction(s_pos: float) -> int:
+	if segments.is_empty():
+		return 0
+	var s_end: float = s_pos + turn_look_ahead
+	for i in segments.size():
+		var seg: TrajectorySegment = segments[i]
+		var seg_start: float = seg_start_arc[i]
+		var seg_end: float = seg_start + seg.length
+		# Segment overlaps the window and is a real turn.
+		if seg_end > s_pos and seg_start < s_end and seg.curvature_at(0.0) > 0.001:
+			return seg.turn_direction()
+	return 0
+
+
+## True when the indicator blinker is in its ON phase (0.2s on / 0.2s off).
+func _indicator_on_phase() -> bool:
+	return fmod(_blink_phase, INDICATOR_BLINK_PERIOD) < INDICATOR_BLINK_PERIOD * 0.5
 
 
 func _draw() -> void:
@@ -314,6 +358,25 @@ func _draw() -> void:
 	)
 	draw_circle(rear_world + Vector2(0, -width * 0.3).rotated(heading), brake_radius, taillight)
 	draw_circle(rear_world + Vector2(0, width * 0.3).rotated(heading), brake_radius, taillight)
+	# Turn indicators: amber blinkers at the corners on the turning side.
+	# Fire when a turn is within the look-ahead window (i.e. while the car is
+	# already decelerating toward it) and blink 0.2s on / 0.2s off. Right turn
+	# -> right-side corners (front-right + rear-right), left -> left-side.
+	var turn_dir: int = _upcoming_turn_direction(s)
+	if turn_dir != 0 and _indicator_on_phase():
+		var side: float = float(turn_dir) * width * 0.5  # +1 right, -1 left
+		var front_corner := Vector2(length * 0.5, side)
+		var rear_corner := Vector2(-length * 0.5, side)
+		var front_corner_world := Vector2(
+			front_corner.x * cos_h - front_corner.y * sin_h,
+			front_corner.x * sin_h + front_corner.y * cos_h
+		)
+		var rear_corner_world := Vector2(
+			rear_corner.x * cos_h - rear_corner.y * sin_h,
+			rear_corner.x * sin_h + rear_corner.y * cos_h
+		)
+		draw_circle(front_corner_world, 2.5, INDICATOR_COLOR)
+		draw_circle(rear_corner_world, 2.5, INDICATOR_COLOR)
 
 
 func is_busy() -> bool:

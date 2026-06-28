@@ -29,3 +29,10 @@ func progress_fraction(s_local: float) -> float:
 	if length <= 0.001:
 		return 0.0
 	return clamp(s_local / length, 0.0, 1.0)
+
+
+## Signed turn direction of this segment: -1 = left, 0 = straight, +1 = right.
+## Base class is straight; BezierSeg overrides. In y-down screen space,
+## cross > 0 (clockwise visually) is a right turn. Used for turn indicators.
+func turn_direction() -> int:
+	return 0
