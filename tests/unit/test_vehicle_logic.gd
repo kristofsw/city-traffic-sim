@@ -94,7 +94,7 @@ func test_look_ahead_lowers_target_before_turn() -> void:
 	vc.max_speed = 80.0
 	vc.turn_slowdown_factor = 0.5
 	vc.min_turn_speed_ratio = 0.25
-	vc.turn_look_ahead = 45.0
+	vc.turn_look_ahead = 60.0
 	vc.decel_distance = 9999.0  # push end-ramp far away so it doesn't interfere
 	_setup_line_then_bezier(vc)
 	# At the END of the LineSeg (just before the bezier), with no look-ahead the
@@ -108,6 +108,87 @@ func test_look_ahead_lowers_target_before_turn() -> void:
 	# And it should be strictly less than the turn factor at the current
 	# position alone (1.0 on the line) would give -- i.e. max_speed.
 	assert_lt(target, vc.max_speed * 1.0, "target should be pulled below max_speed")
+
+
+func test_windowed_factor_enforces_apex_floor() -> void:
+	var vc := VehicleController.new()
+	autofree(vc)
+	vc.turn_slowdown_factor = 0.5
+	vc.min_turn_speed_ratio = 0.25
+	vc.turn_look_ahead = 60.0
+	_setup_line_then_bezier(vc)
+	# Place the window so the bezier apex is strictly inside it: start on the
+	# line, 20px before the arc. The apex is at seg_start_arc[1] + length/2.
+	var arc_start: float = vc.seg_start_arc[1]
+	var apex_arc: float = arc_start + vc.segments[1].length / 2.0
+	var s: float = apex_arc - 20.0
+	# The two-point min(T(s), T(s+L)) would miss the apex (both endpoints sit
+	# on the sides of the V, above the apex value). The windowed min must clamp
+	# to the apex factor -- the real corner floor.
+	var windowed: float = vc._turn_factor_windowed(s)
+	var apex_factor: float = vc._turn_factor_at(apex_arc)
+	assert_almost_eq(
+		windowed,
+		apex_factor,
+		0.001,
+		"windowed factor should clamp to apex floor when apex in window"
+	)
+	assert_lt(
+		windowed,
+		vc._turn_factor_at(s),
+		"windowed factor should be below the entry-side endpoint sample"
+	)
+	assert_lt(
+		windowed,
+		vc._turn_factor_at(s + vc.turn_look_ahead),
+		"windowed factor should be below the exit-side endpoint sample"
+	)
+
+
+func test_windowed_factor_monotonic_brake_in() -> void:
+	# Regression guard against the W-shape / double brake: as the car
+	# approaches a turn, _turn_factor_windowed(s) must be NON-INCREASING.
+	var vc := VehicleController.new()
+	autofree(vc)
+	vc.turn_slowdown_factor = 0.5
+	vc.min_turn_speed_ratio = 0.25
+	vc.turn_look_ahead = 60.0
+	_setup_line_then_bezier(vc)
+	# Walk s from the start of the line to the arc entry in 5px steps.
+	var prev: float = vc._turn_factor_windowed(0.0)
+	var s: float = 5.0
+	var arc_start: float = vc.seg_start_arc[1]
+	while s <= arc_start:
+		var cur: float = vc._turn_factor_windowed(s)
+		assert_true(
+			cur <= prev + 0.0001,
+			"windowed factor should be non-increasing while approaching turn (s=%.1f)" % s
+		)
+		prev = cur
+		s += 5.0
+
+
+func test_windowed_factor_monotonic_accel_out() -> void:
+	# After the apex leaves the window, _turn_factor_windowed(s) must be
+	# NON-DECREASING -- the car spools back up toward cruise, single release.
+	var vc := VehicleController.new()
+	autofree(vc)
+	vc.turn_slowdown_factor = 0.5
+	vc.min_turn_speed_ratio = 0.25
+	vc.turn_look_ahead = 60.0
+	_setup_line_then_bezier(vc)
+	# Start just after the apex has left the window: s > apex_arc.
+	var apex_arc: float = vc.seg_start_arc[1] + vc.segments[1].length / 2.0
+	var s: float = apex_arc + 5.0
+	var prev: float = vc._turn_factor_windowed(s)
+	s += 5.0
+	while s <= vc.total_length:
+		var cur: float = vc._turn_factor_windowed(s)
+		assert_true(
+			cur >= prev - 0.0001, "windowed factor should be non-decreasing after apex (s=%.1f)" % s
+		)
+		prev = cur
+		s += 5.0
 
 
 ## Build a LineSeg (100px) followed by a 90-degree BezierSeg arc and wire up

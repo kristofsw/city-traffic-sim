@@ -96,7 +96,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for layer-by-layer contracts, algorithm d
 | `decel_distance` | `120` | Distance before destination to start braking (px) |
 | `turn_slowdown_factor` | `0.5` | Speed reduction per radian of turn |
 | `min_turn_speed_ratio` | `0.25` | Floor on speed while in a turn (fraction of `max_speed`) |
-| `turn_look_ahead` | `45` | Look-ahead distance for upcoming turns (px) |
+| `turn_look_ahead` | `60` | Look-ahead window for upcoming turns (px) |
 | `snap_distance` | `5` | Snap-to-arrival distance threshold (px) |
 | `snap_speed_threshold` | `15` | Below this speed, snap-to-arrival triggers (px/s) |
 | `lane_offset` | `12` | Right-hand lane offset (must match `RoadGrid`) |

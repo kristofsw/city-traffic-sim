@@ -8,8 +8,9 @@ extends Node2D
 ## Speed is not constant: the car accelerates from standstill at the start
 ## of each trip (S-curve ramp), decelerates to a stop at the destination,
 ## and slows proportionally to turn sharpness (apex-based: slowest in the
-## middle of each arc). Actual speed is rate-limited toward the target so
-## changes are always smooth. Taillights brighten when braking.
+## middle of each arc, with a windowed look-ahead so it brakes BEFORE the
+## turn and sustains the corner speed). Actual speed is rate-limited toward
+## the target so changes are always smooth. Taillights brighten when braking.
 
 signal arrived
 
@@ -23,7 +24,7 @@ const TAILLIGHT_COLOR := Color(1.0, 0.35, 0.30, 1)  # #ff5a4d
 @export var decel_distance: float = 120.0  # px before destination to start braking
 @export var turn_slowdown_factor: float = 0.5  # speed reduction per radian of turn
 @export var min_turn_speed_ratio: float = 0.25  # never slower than this fraction in a turn
-@export var turn_look_ahead: float = 45.0  # px; look ahead for upcoming turns
+@export var turn_look_ahead: float = 60.0  # px; look ahead for upcoming turns
 @export var snap_distance: float = 5.0  # px; snap to arrival when this close
 @export var snap_speed_threshold: float = 15.0  # px/s; below this, snap to arrival
 @export var lane_offset: float = 12.0  # half-lane, right-hand drive
@@ -135,9 +136,14 @@ func _process(delta: float) -> void:
 ## - Apex-based turn slowdown with LOOK-AHEAD: we sample the turn factor at
 ##   the current position AND at `turn_look_ahead` px ahead, then keep the
 ##   lower of the two. This makes the car slow BEFORE entering a turn
-##   (anticipative braking) instead of only reacting once inside the arc.
-##   Recovery after the turn is governed by the gentle accel_rate, so the
-##   car spools back up lazily rather than snapping to cruise.
+## - Apex-based turn slowdown with a WINDOWED look-ahead: we take the
+##   minimum turn factor over the whole window [s, s + turn_look_ahead].
+##   This makes the car slow BEFORE entering a turn (anticipative braking)
+##   and sustain the corner speed while the apex is in the window, then
+##   spool back up lazily via the gentle accel_rate. A two-point min would
+##   miss an apex between the samples and produce a W-shaped target
+##   (brake -> release -> brake, i.e. a double taillight flash); the
+##   windowed min yields a trapezoid -- single sustained slowdown.
 ## The START acceleration is handled by accel_rate itself (the car ramps up
 ## from 0 naturally), so no start_factor is needed -- this avoids a
 ## chicken-and-egg trap where target=0 at s=0 prevents the car from ever
@@ -149,8 +155,10 @@ func _target_speed_at(s_pos: float) -> float:
 	var end_factor: float = 1.0
 	if _eff_decel > 0.001:
 		end_factor = _smoothstep((total_length - s_pos) / _eff_decel)
-	# Turn slowdown with look-ahead: take the lower of "now" and "ahead".
-	var turn_factor: float = min(_turn_factor_at(s_pos), _turn_factor_at(s_pos + turn_look_ahead))
+	# Turn slowdown with a WINDOWED look-ahead: minimum of T over
+	# [s_pos, s_pos + turn_look_ahead]. A trapezoidal target profile
+	# (monotonic brake-in, flat floor, monotonic accel-out) -- no W-shape.
+	var turn_factor: float = _turn_factor_windowed(s_pos)
 	return max_speed * end_factor * turn_factor
 
 
@@ -177,6 +185,29 @@ func _turn_factor_at(s_pos: float) -> float:
 	var apex_weight: float = 1.0 - abs(progress - 0.5) * 2.0
 	var factor: float = 1.0 - turn_angle * turn_slowdown_factor * apex_weight
 	return max(factor, min_turn_speed_ratio)
+
+
+## Minimum turn factor over the window [s_pos, s_pos + turn_look_ahead].
+## For the piecewise-linear triangle T, the minimum over an interval is the
+## minimum of: the two endpoint samples, plus the triangle apex value for
+## any apex (bezier midpoint) lying strictly inside the interval. This
+## produces a trapezoidal target profile (monotonic brake-in, flat floor at
+## the apex factor, monotonic accel-out) instead of the W-shape a two-point
+## min would give -- so the car brakes once and sustains the corner speed.
+func _turn_factor_windowed(s_pos: float) -> float:
+	var s_end: float = s_pos + turn_look_ahead
+	var best: float = _turn_factor_at(s_pos)
+	best = min(best, _turn_factor_at(s_end))
+	# Any bezier apex (segment midpoint) strictly inside (s_pos, s_end)
+	# contributes its apex factor -- the floor the corner enforces.
+	for i in segments.size():
+		var seg: TrajectorySegment = segments[i]
+		if seg.curvature_at(0.0) <= 0.001:
+			continue
+		var apex_arc: float = seg_start_arc[i] + seg.length / 2.0
+		if apex_arc > s_pos and apex_arc < s_end:
+			best = min(best, _turn_factor_at(apex_arc))
+	return best
 
 
 ## Smoothstep: S-curve interpolation. Zero derivative at t=0 and t=1
