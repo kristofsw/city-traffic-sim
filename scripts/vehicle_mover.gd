@@ -23,7 +23,7 @@ signal turn_indicator_changed(direction: int)
 signal arrived
 
 const INDICATOR_BLINK_PERIOD := 0.4  # seconds (0.2s on / 0.2s off)
-const COAST_DOWN_GLOW := 0.25  # taillight intensity while coasting down
+const COAST_DOWN_GLOW := 0.5  # taillight intensity while coasting down
 const HOLD_STILL_GLOW := 1.0  # taillight intensity while stopped at zero target
 
 # Convenience accessors read/write through the spec so call sites stay short
@@ -153,16 +153,18 @@ func update(delta: float) -> void:
 		return
 
 	var target: float = target_speed_at(s)
+	var prev_speed: float = current_speed
 
-	# Rate-limited speed approach (no jerk). Track coast-down for the
-	# braking signal: the frame the rate-limiter subtracts speed we are
-	# "decelerating" even if speed ~= target (easing toward a lower target).
-	var decelerating: bool = false
+	# Rate-limited speed approach (no jerk). The actual per-frame speed
+	# delta (speed_after - speed_before) is the true deceleration signal:
+	# it is < 0 whenever the car is slowing, regardless of whether the
+	# target dropped smoothly (end ramp, turn) or sharply (future obstacle).
 	if current_speed < target:
 		current_speed = min(current_speed + accel_rate * delta, target)
 	else:
 		current_speed = max(current_speed - decel_rate * delta, target)
-		decelerating = true
+
+	var speed_delta: float = current_speed - prev_speed  # < 0 when decelerating
 
 	s += current_speed * delta
 	_blink_phase += delta
@@ -186,7 +188,7 @@ func update(delta: float) -> void:
 
 	position_changed.emit(position_on_road, heading)
 	speed_changed.emit(current_speed)
-	_recompute_braking(decelerating, target)
+	_recompute_braking(speed_delta, target)
 	_recompute_turn_indicator()
 
 	_emit_arrived_if_done()
@@ -257,20 +259,33 @@ func _smoothstep(t: float) -> float:
 	return t * t * (3.0 - 2.0 * t)
 
 
-## Braking intensity 0..1 from current state. Three regimes:
-## - Hard brake (speed > target): proportional ramp up to 1.0.
-## - Coast-down (decelerating this frame, speed <= target): gentle glow.
+## Braking intensity 0..1 from the actual per-frame speed change and the
+## gap between speed and target. Three regimes, checked in priority order:
 ## - Hold-still (target ~0 and speed ~0): full bright (future traffic lights).
-func braking_intensity(decelerating: bool, target: float) -> float:
+## - Hard brake (speed > target by more than 20% of max_speed): clamped ramp.
+## - Decelerating (speed_delta < 0 this frame): glow proportional to the
+##   deceleration rate, from COAST_DOWN_GLOW (gentle ease-off) up to 1.0
+##   (full decel_rate). This catches EVERY slowdown -- end ramp, turn
+##   approach, future obstacle -- because it watches the actual speed delta,
+##   not the cause.
+func braking_intensity(speed_delta: float, target: float) -> float:
 	if trajectory == null or trajectory.is_empty() or s >= trajectory.total_length:
 		return 0.0
 	# Hold-still: stopped at a zero target (red light / stop sign / arrived).
 	if target <= 0.001 and current_speed <= 0.001:
 		return HOLD_STILL_GLOW
-	if current_speed > target:
-		return clamp((current_speed - target) / (max_speed * 0.2), 0.0, 1.0)
-	if decelerating:
-		return COAST_DOWN_GLOW
+	# Hard brake: speed overshoots the target by a meaningful margin. The
+	# rate-limiter usually closes this gap within a frame, so this branch
+	# fires mainly on sudden target drops (future obstacle / red light).
+	if current_speed > target + 0.5:
+		var overshoot: float = clamp((current_speed - target) / (max_speed * 0.2), 0.0, 1.0)
+		return max(overshoot, COAST_DOWN_GLOW)
+	# Decelerating: the rate-limiter subtracted speed this frame. Scale the
+	# glow by how hard it braked relative to decel_rate, so a gentle ease-off
+	# glows softly and a full decel_rate brake glows bright.
+	if speed_delta < -0.01:
+		var decel_fraction: float = clamp(-speed_delta / (decel_rate * 0.033), 0.0, 1.0)
+		return lerp(COAST_DOWN_GLOW, 1.0, decel_fraction)
 	return 0.0
 
 
@@ -299,13 +314,13 @@ func indicator_on_phase() -> bool:
 # ---------------------------------------------------------------------------
 
 
-func _recompute_braking(decelerating: bool = false, target: float = -1.0) -> void:
+func _recompute_braking(speed_delta: float = 0.0, target: float = -1.0) -> void:
 	if target < 0.0:
 		if trajectory == null or trajectory.is_empty():
 			target = 0.0
 		else:
 			target = target_speed_at(s)
-	var intensity: float = braking_intensity(decelerating, target)
+	var intensity: float = braking_intensity(speed_delta, target)
 	if abs(intensity - _last_braking) > 0.001:
 		_last_braking = intensity
 		braking_changed.emit(intensity)

@@ -20,7 +20,7 @@ func test_braking_intensity_zero_when_not_braking() -> void:
 	var m := VehicleMover.new()
 	# No trajectory assigned -> braking intensity should be 0.
 	assert_eq(
-		m.braking_intensity(false, 0.0), 0.0, "braking intensity should be 0 with no trajectory"
+		m.braking_intensity(0.0, 0.0), 0.0, "braking intensity should be 0 with no trajectory"
 	)
 
 
@@ -152,12 +152,15 @@ func test_braking_intensity_coast_down_glow() -> void:
 	var m := VehicleMover.new()
 	m.max_speed = 80.0
 	_setup_line_then_bezier(m)
-	# Coasting down: speed == target, decelerating this frame -> gentle glow.
+	# Coasting down: speed delta is negative (rate-limiter subtracted speed)
+	# but the decel is gentle (small fraction of decel_rate) -> glows at or
+	# above the COAST_DOWN_GLOW floor (any decel lifts the taillights).
 	m.s = 0.0
 	m.current_speed = m.max_speed  # == target on the line at s=0
-	var intensity: float = m.braking_intensity(true, m.max_speed)
-	assert_almost_eq(
-		intensity, m.COAST_DOWN_GLOW, 0.001, "coast-down should glow at COAST_DOWN_GLOW"
+	# A small speed delta, well below decel_rate*0.033 (~4 px/s).
+	var intensity: float = m.braking_intensity(-0.5, m.max_speed)
+	assert_gte(
+		intensity, m.COAST_DOWN_GLOW, "gentle coast-down should glow at least at COAST_DOWN_GLOW"
 	)
 
 
@@ -165,13 +168,29 @@ func test_braking_intensity_zero_when_accelerating() -> void:
 	var m := VehicleMover.new()
 	m.max_speed = 80.0
 	_setup_line_then_bezier(m)
-	# Accelerating: speed <= target and NOT decelerating -> 0.0.
+	# Accelerating: speed delta is positive -> 0.0.
 	m.s = 0.0
 	m.current_speed = 40.0  # below target (max_speed on the line)
 	assert_eq(
-		m.braking_intensity(false, m.max_speed),
+		m.braking_intensity(2.0, m.max_speed),
 		0.0,
 		"braking intensity should be 0 when accelerating"
+	)
+
+
+func test_braking_intensity_zero_when_cruising() -> void:
+	var m := VehicleMover.new()
+	m.max_speed = 80.0
+	_setup_line_then_bezier(m)
+	# Cruising: speed delta ~0 (speed matches target, no change) -> 0.0.
+	# This is the bug the user reported: cruising at constant speed must NOT
+	# light the brake lights.
+	m.s = 0.0
+	m.current_speed = m.max_speed  # == target on the line at s=0
+	assert_eq(
+		m.braking_intensity(0.0, m.max_speed),
+		0.0,
+		"braking intensity should be 0 when cruising at constant speed"
 	)
 
 
@@ -179,19 +198,39 @@ func test_braking_intensity_hard_brake_ramp() -> void:
 	var m := VehicleMover.new()
 	m.max_speed = 80.0
 	_setup_line_then_bezier(m)
-	# Hard brake: speed above target -> proportional ramp.
+	# Hard brake: speed overshoots the target by a large margin -> clamped
+	# to 1.0 regardless of the per-frame delta.
 	m.s = 0.0
 	m.current_speed = m.max_speed  # target on the line is max_speed
 	var target: float = m.max_speed * 0.5  # pretend a turn lowered the target
-	var intensity: float = m.braking_intensity(true, target)
+	var intensity: float = m.braking_intensity(-2.0, target)
 	# (max_speed - 0.5*max_speed) / (max_speed * 0.2) = 2.5 -> clamped to 1.0
 	assert_almost_eq(intensity, 1.0, 0.001, "hard brake above the 20% band should clamp to 1.0")
-	# Just barely above target: small overshoot -> small intensity.
+	# Just barely above target: small overshoot -> at least COAST_DOWN_GLOW.
 	m.current_speed = target + m.max_speed * 0.1
-	var intensity2: float = m.braking_intensity(true, target)
-	assert_almost_eq(
-		intensity2, 0.5, 0.001, "10% overshoot of max_speed (half of 20% band) -> 0.5 intensity"
+	var intensity2: float = m.braking_intensity(-2.0, target)
+	assert_gte(
+		intensity2, m.COAST_DOWN_GLOW, "10% overshoot should glow at least at COAST_DOWN_GLOW"
 	)
+
+
+func test_braking_intensity_full_decel_rate_bright() -> void:
+	var m := VehicleMover.new()
+	m.max_speed = 80.0
+	_setup_line_then_bezier(m)
+	# Full decel_rate braking (end of trip): the per-frame speed delta equals
+	# decel_rate * delta. With delta=1/60 and decel_rate=120, that's 2 px/s.
+	# The decel_fraction = -speed_delta / (decel_rate * 0.033) should be ~0.5
+	# so the glow should be well above the floor (lerp(0.5, 1.0, 0.5) ~ 0.75).
+	# Set current_speed == target so the hard-brake branch doesn't intercept;
+	# we want to exercise the decelerating branch.
+	m.s = 0.0
+	m.current_speed = m.max_speed * 0.5
+	var target: float = m.max_speed * 0.5
+	var speed_delta: float = -m.decel_rate * (1.0 / 60.0)  # -2.0 px/s
+	var intensity: float = m.braking_intensity(speed_delta, target)
+	# decel_fraction = 2.0 / (120 * 0.033) = 2.0 / 3.96 ~ 0.505 -> lerp(0.5, 1.0, 0.505) ~ 0.75
+	assert_gte(intensity, 0.7, "full decel_rate braking should glow bright (>= 0.7)")
 
 
 func test_braking_intensity_bright_while_stopped() -> void:
@@ -201,7 +240,7 @@ func test_braking_intensity_bright_while_stopped() -> void:
 	# Hold-still: target ~0 and speed ~0 -> full bright (future traffic lights).
 	m.s = 0.0
 	m.current_speed = 0.0
-	var intensity: float = m.braking_intensity(true, 0.0)
+	var intensity: float = m.braking_intensity(-0.1, 0.0)
 	assert_almost_eq(
 		intensity, m.HOLD_STILL_GLOW, 0.001, "stopped at zero target should be full bright"
 	)
