@@ -34,7 +34,9 @@ var graph: RoadGraph = null
 var route_path: Array[Vector2i] = []
 var route_start: Vector2i = Vector2i.ZERO
 var route_goal: Vector2i = Vector2i.ZERO
-var _route_trajectory: Trajectory = null  # cached; rebuilt only on set_route/_regenerate
+var _route_trajectory: Trajectory = null  # cached; rebuilt on set_route/_regenerate
+# Cached polyline; rebuilt alongside _route_trajectory.
+var _route_samples: PackedVector2Array = PackedVector2Array()
 
 
 func _ready() -> void:
@@ -57,6 +59,7 @@ func _regenerate() -> void:
 	graph = RoadGraph.new()
 	graph.build(generator)
 	_route_trajectory = null  # invalidate cache; graph changed
+	_route_samples = PackedVector2Array()
 	queue_redraw()
 
 
@@ -99,25 +102,34 @@ func _draw_route() -> void:
 	# lane through intersections and draws smooth bezier curves at turns.
 	if _route_trajectory == null or _route_trajectory.is_empty():
 		_route_trajectory = _build_route_trajectory()
+		_route_samples = _sample_route(_route_trajectory)
 	if _route_trajectory == null or _route_trajectory.is_empty():
 		return
-	var total: float = _route_trajectory.total_length
-	# Sample every ~4px for a smooth line.
+	if _route_samples.size() < 2:
+		return
+	draw_polyline(_route_samples, ROUTE_LINE_COLOR, 3.0, true)
+	# Start (A) ring: green, on the right lane.
+	_draw_ring(_route_trajectory.position_at(0.0), 10.0, ROUTE_START_COLOR)
+	# Goal (B) ring: red, on the right lane.
+	_draw_ring(
+		_route_trajectory.position_at(_route_trajectory.total_length), 10.0, ROUTE_GOAL_COLOR
+	)
+
+
+## Sample the trajectory at fixed arc-length intervals into a polyline.
+## Extracted so the sample cache can be rebuilt alongside the trajectory
+## without re-running the sampling loop on every queue_redraw.
+func _sample_route(traj: Trajectory) -> PackedVector2Array:
+	var total: float = traj.total_length
 	var sample_interval: float = 4.0
 	var pts: PackedVector2Array = PackedVector2Array()
 	var arc: float = 0.0
 	var hint: int = 0
 	while arc <= total:
-		hint = _route_trajectory.segment_index_at(arc, hint)
-		pts.append(_route_trajectory.position_at(arc, hint))
+		hint = traj.segment_index_at(arc, hint)
+		pts.append(traj.position_at(arc, hint))
 		arc += sample_interval
-	if pts.size() < 2:
-		return
-	draw_polyline(pts, ROUTE_LINE_COLOR, 3.0, true)
-	# Start (A) ring: green, on the right lane.
-	_draw_ring(_route_trajectory.position_at(0.0), 10.0, ROUTE_START_COLOR)
-	# Goal (B) ring: red, on the right lane.
-	_draw_ring(_route_trajectory.position_at(total), 10.0, ROUTE_GOAL_COLOR)
+	return pts
 
 
 func _build_route_trajectory() -> Trajectory:
@@ -146,12 +158,13 @@ func _draw_dashed_line(
 
 
 func _input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_F1:
-			show_debug = not show_debug
-			queue_redraw()
-		elif event.keycode == KEY_F5:
-			_regenerate()
+	if event.is_action_pressed("toggle_debug"):
+		show_debug = not show_debug
+		queue_redraw()
+		get_viewport().set_input_as_handled()
+	elif event.is_action_pressed("regenerate_grid"):
+		_regenerate()
+		get_viewport().set_input_as_handled()
 
 
 func get_graph() -> RoadGraph:
@@ -167,6 +180,7 @@ func set_route(start: Vector2i, goal: Vector2i, path: Array[Vector2i]) -> void:
 	route_goal = goal
 	route_path = path
 	_route_trajectory = null  # invalidate cache; route changed
+	_route_samples = PackedVector2Array()
 	queue_redraw()
 
 
@@ -175,4 +189,5 @@ func clear_route() -> void:
 	route_start = Vector2i.ZERO
 	route_goal = Vector2i.ZERO
 	_route_trajectory = null
+	_route_samples = PackedVector2Array()
 	queue_redraw()

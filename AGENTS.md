@@ -117,20 +117,30 @@ Key principles for this project:
 ## Architecture overview
 
 ```
-GridGenerator (RefCounted) → RoadGraph (RefCounted) → TrajectoryBuilder (RefCounted)
-                                                                    ↓
-                                                    Array[TrajectorySegment]
-                                                    (LineSeg / BezierSeg)
-                                                                    ↓
-                                          VehicleController (Node2D) — drives
-                                          RoadGrid (Node2D) — draws route line
-                                          SimulationManager (Node2D) — orchestrates
+Main (Node2D, main.gd) — entry point; injects RoadGrid into SimulationManager
+├── RoadGrid (Node2D) — owns MapGenerator + RoadGraph; renders roads + route
+└── SimulationManager (Node2D) — owns VehicleSpawner; spawns + repaths vehicles
+    └── VehicleController (Node2D) — thin orchestrator
+        ├── VehicleMover (RefCounted) — pure motion model + signals
+        └── VehicleBody (Node2D) — composed visual scene (body + CircleDrawer lights)
+
+MapGenerator (Resource) → RoadGraph (RefCounted) → TrajectoryBuilder (RefCounted)
+                                                            ↓
+                                            Trajectory (RefCounted) wraps segments
+                                            (LineSeg / BezierSeg)
 ```
 
-- `GridGenerator`: builds the road grid (nodes + edges)
+- `MapGenerator`: Resource contract for procedural map generation (`.tres` presets)
+- `GridGenerator`: builds the Manhattan grid (extends MapGenerator)
 - `RoadGraph`: A* pathfinding over the grid
 - `TrajectoryBuilder`: converts a path into LineSeg/BezierSeg segments
+- `Trajectory`: arc-length-parametrized wrapper (DRY: single source of segment lookup)
 - `TrajectorySegment` / `LineSeg` / `BezierSeg`: parametric trajectory segments
-- `VehicleController`: drives along the trajectory (accel/decel, brake lights)
-- `RoadGrid`: renders roads + route visualization
-- `SimulationManager`: spawns vehicles, assigns paths, repaths on arrival
+- `VehicleSpec`: Resource holding all tuning + visual config (swappable per vehicle type)
+- `VehicleMover`: pure motion model (RefCounted); emits `braking_changed`/`turn_indicator_changed`/`arrived` signals
+- `VehicleBody`: composed visual scene driven by mover signals
+- `VehicleController`: thin orchestrator owning a mover + body
+- `VehicleSpawner`: spawn/repath policy (multi-vehicle ready, RefCounted)
+- `RoadGrid`: renders roads + route visualization; owns the MapGenerator
+- `SimulationManager`: owns the spawner; spawns N vehicles, repaths on arrival
+- `Main`: entry point; mediates siblings via dependency injection
