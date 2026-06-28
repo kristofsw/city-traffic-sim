@@ -19,6 +19,24 @@ extends RefCounted
 static func build(
 	graph: RoadGraph, path: Array[Vector2i], lane_offset: float, turn_radius: float
 ) -> Array[TrajectorySegment]:
+	var out: Array[TrajectorySegment] = _build_segments(graph, path, lane_offset, turn_radius)
+	return out
+
+
+## Convenience: build a Trajectory wrapper (segments + arc-length bookkeeping)
+## in one call. Preferred over build() for new consumers -- it eliminates the
+## duplicated cumulative-arc loop that VehicleController, RoadGrid and the
+## integration tests each used to reimplement.
+static func build_trajectory(
+	graph: RoadGraph, path: Array[Vector2i], lane_offset: float, turn_radius: float
+) -> Trajectory:
+	return Trajectory.from_segments(_build_segments(graph, path, lane_offset, turn_radius))
+
+
+# Internal segment list builder shared by build() and build_trajectory().
+static func _build_segments(
+	graph: RoadGraph, path: Array[Vector2i], lane_offset: float, turn_radius: float
+) -> Array[TrajectorySegment]:
 	var out: Array[TrajectorySegment] = []
 	if path.size() < 2:
 		return out

@@ -18,28 +18,20 @@ func test_full_trip_right_lane_invariant() -> void:
 	var path := graph.find_path(start, goal)
 	assert_gt(path.size(), 1, "path should exist from (0,0) to (5,3)")
 
-	var segs := TrajectoryBuilder.build(graph, path, 12.0, 22.0)
-	assert_gt(segs.size(), 0, "trajectory should have segments")
+	var traj := TrajectoryBuilder.build_trajectory(graph, path, 12.0, 22.0)
+	assert_false(traj.is_empty(), "trajectory should have segments")
 
 	# Simulate driving the full trajectory at fixed speed.
-	var total_length := 0.0
-	var seg_start_arc: Array[float] = []
-	for seg in segs:
-		seg_start_arc.append(total_length)
-		total_length += seg.length
-
+	var total_length := traj.total_length
 	var s := 0.0
 	var speed := 120.0
 	var delta := 1.0 / 60.0
 	var min_signed_offset := INF
+	var seg_hint := 0
 
 	while s < total_length:
-		# Find current segment.
-		var seg_idx := 0
-		while seg_idx < segs.size() - 1 and s >= seg_start_arc[seg_idx] + segs[seg_idx].length:
-			seg_idx += 1
-		var local_s := s - seg_start_arc[seg_idx]
-		var pos := segs[seg_idx].position_at(local_s)
+		seg_hint = traj.segment_index_at(s, seg_hint)
+		var pos := traj.position_at(s, seg_hint)
 
 		# Compute signed lane offset relative to the nearest path segment.
 		var best_i := 0
@@ -83,7 +75,8 @@ func test_full_trip_segment_contiguity() -> void:
 	var path := graph.find_path(Vector2i(0, 0), Vector2i(9, 5))
 	assert_gt(path.size(), 1, "path should exist across the grid")
 
-	var segs := TrajectoryBuilder.build(graph, path, 12.0, 22.0)
+	var traj := TrajectoryBuilder.build_trajectory(graph, path, 12.0, 22.0)
+	var segs := traj.segments
 	for i in range(segs.size() - 1):
 		var end_pos := segs[i].position_at(segs[i].length)
 		var start_next := segs[i + 1].position_at(0.0)

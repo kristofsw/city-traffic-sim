@@ -36,11 +36,11 @@ const COAST_DOWN_GLOW := 0.25  # taillight intensity while coasting down
 
 var graph: RoadGraph = null
 var path: Array[Vector2i] = []
-var segments: Array[TrajectorySegment] = []
-var seg_start_arc: Array[float] = []  # cumulative arc length at start of each segment
-var total_length: float = 0.0
+var trajectory: Trajectory = null  # owns segments + arc-length bookkeeping (DRY)
+var segments: Array[TrajectorySegment] = []  # cached alias for trajectory.segments (read-only)
+var total_length: float = 0.0  # cached alias for trajectory.total_length
 var s: float = 0.0  # arc-length position along whole trajectory
-var seg_index: int = 0  # cached current segment index
+var seg_index: int = 0  # cached current segment index (hint for trajectory.segment_index_at)
 var heading: float = 0.0
 var position_on_road: Vector2 = Vector2.ZERO
 var current_speed: float = 0.0  # actual speed (px/s), rate-limited toward target
@@ -56,31 +56,27 @@ func _ready() -> void:
 
 func assign_path(new_path: Array[Vector2i]) -> void:
 	path = new_path
-	segments = TrajectoryBuilder.build(graph, new_path, lane_offset, turn_radius)
-	seg_start_arc.clear()
-	var cum: float = 0.0
-	for seg in segments:
-		seg_start_arc.append(cum)
-		cum += seg.length
-	total_length = cum
+	trajectory = TrajectoryBuilder.build_trajectory(graph, new_path, lane_offset, turn_radius)
+	segments = trajectory.segments
+	total_length = trajectory.total_length
 	s = 0.0
 	seg_index = 0
 	current_speed = 0.0
 	# Clamp decel distance for very short trips so the end ramp fits.
 	_eff_decel = min(decel_distance, total_length * 0.4)
-	if segments.size() > 0:
-		position_on_road = segments[0].position_at(0.0)
-		heading = segments[0].tangent_at(0.0)
+	if not trajectory.is_empty():
+		position_on_road = trajectory.position_at(0.0)
+		heading = trajectory.tangent_at(0.0)
 		position = position_on_road
 	if path.size() >= 1:
 		_current_segment_key = path[0]
 
 
 func _process(delta: float) -> void:
-	if graph == null or segments.is_empty() or s >= total_length:
+	if graph == null or trajectory == null or trajectory.is_empty() or s >= total_length:
 		# Arrival check. Guard BEFORE emit so the handler's assign_path
 		# (which resets s=0 and segments) is not overwritten.
-		if segments.size() > 0 and s >= total_length:
+		if trajectory != null and not trajectory.is_empty() and s >= total_length:
 			s = total_length + 1.0  # guard against re-emit
 			arrived.emit()
 		return
@@ -116,11 +112,12 @@ func _process(delta: float) -> void:
 	if s >= total_length:
 		s = total_length
 
-	# Find the segment containing the current arc length.
-	_advance_segment_index()
-	var local_s: float = s - seg_start_arc[seg_index]
+	# Find the segment containing the current arc length (cached forward walk
+	# via the trajectory hint). Position and heading both come from the same
+	# parametric evaluation so the body is always exactly tangent to the curve.
+	seg_index = trajectory.segment_index_at(s, seg_index)
+	var local_s: float = s - trajectory.seg_start_arc[seg_index]
 	var seg: TrajectorySegment = segments[seg_index]
-	# Position and heading both come from the same parametric evaluation.
 	position_on_road = seg.position_at(local_s)
 	heading = seg.tangent_at(local_s)
 	position = position_on_road
@@ -185,15 +182,13 @@ func _turn_factor_at(s_pos: float) -> float:
 		return 1.0
 	# Clamp to trajectory bounds: past the end there is no turn.
 	var s_clamped: float = clamp(s_pos, 0.0, total_length)
-	# Locate the segment containing s_clamped (linear scan; small arrays).
-	var idx: int = 0
-	while idx < segments.size() - 1 and s_clamped >= seg_start_arc[idx] + segments[idx].length:
-		idx += 1
+	# Locate the segment containing s_clamped (via Trajectory; small arrays).
+	var idx: int = trajectory.segment_index_at(s_clamped, seg_index)
 	var seg: TrajectorySegment = segments[idx]
 	var turn_angle: float = seg.curvature_at(0.0)
 	if turn_angle <= 0.001:
 		return 1.0
-	var progress: float = seg.progress_fraction(s_clamped - seg_start_arc[idx])
+	var progress: float = seg.progress_fraction(s_clamped - trajectory.seg_start_arc[idx])
 	# Triangle weight: 0 at entry, 1 at apex (progress=0.5), 0 at exit.
 	var apex_weight: float = 1.0 - abs(progress - 0.5) * 2.0
 	var factor: float = 1.0 - turn_angle * turn_slowdown_factor * apex_weight
@@ -217,7 +212,7 @@ func _turn_factor_windowed(s_pos: float) -> float:
 		var seg: TrajectorySegment = segments[i]
 		if seg.curvature_at(0.0) <= 0.001:
 			continue
-		var apex_arc: float = seg_start_arc[i] + seg.length / 2.0
+		var apex_arc: float = trajectory.seg_start_arc[i] + seg.length / 2.0
 		if apex_arc > s_pos and apex_arc < s_end:
 			best = min(best, _turn_factor_at(apex_arc))
 	return best
@@ -228,15 +223,6 @@ func _turn_factor_windowed(s_pos: float) -> float:
 func _smoothstep(t: float) -> float:
 	t = clamp(t, 0.0, 1.0)
 	return t * t * (3.0 - 2.0 * t)
-
-
-func _advance_segment_index() -> void:
-	# Walk forward from the cached index until we find the segment containing s.
-	while (
-		seg_index < segments.size() - 1
-		and s >= seg_start_arc[seg_index] + segments[seg_index].length
-	):
-		seg_index += 1
 
 
 func _estimate_current_segment() -> Vector2i:
@@ -287,7 +273,7 @@ func _signed_lane_offset() -> float:
 ##   off toward a lower target -- e.g. before a turn or a stop -- not only
 ##   when actively braking hard.
 func _braking_intensity() -> float:
-	if segments.is_empty() or s >= total_length:
+	if trajectory == null or trajectory.is_empty() or s >= total_length:
 		return 0.0
 	var target: float = _target_speed_at(s)
 	if current_speed > target:
@@ -304,12 +290,12 @@ func _braking_intensity() -> float:
 ## leaves the window. Returns the direction of the FIRST turn in the window
 ## (the next one the car will take). Pure, side-effect free for testability.
 func _upcoming_turn_direction(s_pos: float) -> int:
-	if segments.is_empty():
+	if trajectory == null or trajectory.is_empty():
 		return 0
 	var s_end: float = s_pos + turn_look_ahead
 	for i in segments.size():
 		var seg: TrajectorySegment = segments[i]
-		var seg_start: float = seg_start_arc[i]
+		var seg_start: float = trajectory.seg_start_arc[i]
 		var seg_end: float = seg_start + seg.length
 		# Segment overlaps the window and is a real turn.
 		if seg_end > s_pos and seg_start < s_end and seg.curvature_at(0.0) > 0.001:

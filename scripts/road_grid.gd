@@ -27,6 +27,7 @@ var graph: RoadGraph = null
 var route_path: Array[Vector2i] = []
 var route_start: Vector2i = Vector2i.ZERO
 var route_goal: Vector2i = Vector2i.ZERO
+var _route_trajectory: Trajectory = null  # cached; rebuilt only on set_route/_regenerate
 
 
 func _ready() -> void:
@@ -43,6 +44,7 @@ func _regenerate() -> void:
 	generator.generate()
 	graph = RoadGraph.new()
 	graph.build(generator)
+	_route_trajectory = null  # invalidate cache; graph changed
 	queue_redraw()
 
 
@@ -79,50 +81,35 @@ func _draw() -> void:
 func _draw_route() -> void:
 	if route_path.size() < 2:
 		return
-	# Build the same right-lane offset trajectory the vehicle follows
-	# (LineSeg + BezierSeg), then sample it at fixed arc-length intervals
-	# for a smooth polyline. This keeps the route line on the right lane
-	# through intersections and draws smooth bezier curves at turns.
-	var segs: Array[TrajectorySegment] = _build_route_segments()
-	if segs.is_empty():
+	# Use the cached right-lane offset trajectory (same one the vehicle follows:
+	# LineSeg + BezierSeg). Rebuild only if missing. Sampling at fixed
+	# arc-length intervals yields a smooth polyline that stays on the right
+	# lane through intersections and draws smooth bezier curves at turns.
+	if _route_trajectory == null or _route_trajectory.is_empty():
+		_route_trajectory = _build_route_trajectory()
+	if _route_trajectory == null or _route_trajectory.is_empty():
 		return
-	# Cumulative arc lengths.
-	var cum_arc: Array[float] = []
-	var total: float = 0.0
-	for seg in segs:
-		cum_arc.append(total)
-		total += seg.length
+	var total: float = _route_trajectory.total_length
 	# Sample every ~4px for a smooth line.
 	var sample_interval: float = 4.0
 	var pts: PackedVector2Array = PackedVector2Array()
 	var arc: float = 0.0
+	var hint: int = 0
 	while arc <= total:
-		pts.append(_position_on_segments(segs, cum_arc, arc))
+		hint = _route_trajectory.segment_index_at(arc, hint)
+		pts.append(_route_trajectory.position_at(arc, hint))
 		arc += sample_interval
 	if pts.size() < 2:
 		return
 	draw_polyline(pts, ROUTE_LINE_COLOR, 3.0, true)
 	# Start (A) ring: green, on the right lane.
-	_draw_ring(segs[0].position_at(0.0), 10.0, ROUTE_START_COLOR)
+	_draw_ring(_route_trajectory.position_at(0.0), 10.0, ROUTE_START_COLOR)
 	# Goal (B) ring: red, on the right lane.
-	_draw_ring(
-		segs[segs.size() - 1].position_at(segs[segs.size() - 1].length), 10.0, ROUTE_GOAL_COLOR
-	)
+	_draw_ring(_route_trajectory.position_at(total), 10.0, ROUTE_GOAL_COLOR)
 
 
-func _position_on_segments(
-	segs: Array[TrajectorySegment], cum_arc: Array[float], arc: float
-) -> Vector2:
-	# Find the segment containing 'arc' (linear walk; small arrays).
-	var i: int = 0
-	while i < segs.size() - 1 and arc >= cum_arc[i] + segs[i].length:
-		i += 1
-	var local_s: float = arc - cum_arc[i]
-	return segs[i].position_at(local_s)
-
-
-func _build_route_segments() -> Array[TrajectorySegment]:
-	return TrajectoryBuilder.build(graph, route_path, lane_offset, turn_radius_for_route)
+func _build_route_trajectory() -> Trajectory:
+	return TrajectoryBuilder.build_trajectory(graph, route_path, lane_offset, turn_radius_for_route)
 
 
 func _draw_ring(center: Vector2, radius: float, color: Color) -> void:
@@ -167,6 +154,7 @@ func set_route(start: Vector2i, goal: Vector2i, path: Array[Vector2i]) -> void:
 	route_start = start
 	route_goal = goal
 	route_path = path
+	_route_trajectory = null  # invalidate cache; route changed
 	queue_redraw()
 
 
@@ -174,4 +162,5 @@ func clear_route() -> void:
 	route_path = []
 	route_start = Vector2i.ZERO
 	route_goal = Vector2i.ZERO
+	_route_trajectory = null
 	queue_redraw()

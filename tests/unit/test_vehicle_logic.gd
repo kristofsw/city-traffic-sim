@@ -39,7 +39,7 @@ func test_turn_factor_at_apex() -> void:
 	vc.min_turn_speed_ratio = 0.25
 	_setup_line_then_bezier(vc)
 	# Apex of the bezier is at its midpoint: seg_start_arc[1] + bezier.length/2.
-	var apex_s: float = vc.seg_start_arc[1] + vc.segments[1].length / 2.0
+	var apex_s: float = vc.trajectory.seg_start_arc[1] + vc.segments[1].length / 2.0
 	var factor: float = vc._turn_factor_at(apex_s)
 	# At apex apex_weight=1, turn_angle=PI/2 -> factor = 1 - (PI/2)*0.5*1.
 	var expected: float = max(1.0 - (PI / 2.0) * 0.5 * 1.0, 0.25)
@@ -53,12 +53,12 @@ func test_turn_factor_at_entry_exit() -> void:
 	vc.min_turn_speed_ratio = 0.25
 	_setup_line_then_bezier(vc)
 	# At the entry of the bezier (progress=0) apex_weight=0 -> factor=1.0.
-	var entry_s: float = vc.seg_start_arc[1]
+	var entry_s: float = vc.trajectory.seg_start_arc[1]
 	assert_almost_eq(
 		vc._turn_factor_at(entry_s), 1.0, 0.001, "turn factor at arc entry should be 1.0"
 	)
 	# At the exit of the bezier (progress=1) apex_weight=0 -> factor=1.0.
-	var exit_s: float = vc.seg_start_arc[1] + vc.segments[1].length
+	var exit_s: float = vc.trajectory.seg_start_arc[1] + vc.segments[1].length
 	assert_almost_eq(
 		vc._turn_factor_at(exit_s), 1.0, 0.001, "turn factor at arc exit should be 1.0"
 	)
@@ -69,7 +69,7 @@ func test_turn_factor_at_line_seg() -> void:
 	autofree(vc)
 	_setup_line_then_bezier(vc)
 	# On the straight LineSeg, curvature is 0 -> factor 1.0 everywhere.
-	var mid_line: float = vc.seg_start_arc[0] + vc.segments[0].length / 2.0
+	var mid_line: float = vc.trajectory.seg_start_arc[0] + vc.segments[0].length / 2.0
 	assert_almost_eq(
 		vc._turn_factor_at(mid_line), 1.0, 0.001, "turn factor on LineSeg should be 1.0"
 	)
@@ -100,7 +100,7 @@ func test_look_ahead_lowers_target_before_turn() -> void:
 	# At the END of the LineSeg (just before the bezier), with no look-ahead the
 	# turn factor would be 1.0 (still on a straight). With look-ahead, the
 	# future bezier pulls the target down -> target < max_speed.
-	var end_of_line: float = vc.seg_start_arc[0] + vc.segments[0].length
+	var end_of_line: float = vc.trajectory.seg_start_arc[0] + vc.segments[0].length
 	var target: float = vc._target_speed_at(end_of_line)
 	assert_lt(
 		target, vc.max_speed, "look-ahead should lower target below max_speed before the turn"
@@ -119,7 +119,7 @@ func test_windowed_factor_enforces_apex_floor() -> void:
 	_setup_line_then_bezier(vc)
 	# Place the window so the bezier apex is strictly inside it: start on the
 	# line, 20px before the arc. The apex is at seg_start_arc[1] + length/2.
-	var arc_start: float = vc.seg_start_arc[1]
+	var arc_start: float = vc.trajectory.seg_start_arc[1]
 	var apex_arc: float = arc_start + vc.segments[1].length / 2.0
 	var s: float = apex_arc - 20.0
 	# The two-point min(T(s), T(s+L)) would miss the apex (both endpoints sit
@@ -157,7 +157,7 @@ func test_windowed_factor_monotonic_brake_in() -> void:
 	# Walk s from the start of the line to the arc entry in 5px steps.
 	var prev: float = vc._turn_factor_windowed(0.0)
 	var s: float = 5.0
-	var arc_start: float = vc.seg_start_arc[1]
+	var arc_start: float = vc.trajectory.seg_start_arc[1]
 	while s <= arc_start:
 		var cur: float = vc._turn_factor_windowed(s)
 		assert_true(
@@ -178,7 +178,7 @@ func test_windowed_factor_monotonic_accel_out() -> void:
 	vc.turn_look_ahead = 60.0
 	_setup_line_then_bezier(vc)
 	# Start just after the apex has left the window: s > apex_arc.
-	var apex_arc: float = vc.seg_start_arc[1] + vc.segments[1].length / 2.0
+	var apex_arc: float = vc.trajectory.seg_start_arc[1] + vc.segments[1].length / 2.0
 	var s: float = apex_arc + 5.0
 	var prev: float = vc._turn_factor_windowed(s)
 	s += 5.0
@@ -192,17 +192,17 @@ func test_windowed_factor_monotonic_accel_out() -> void:
 
 
 ## Build a LineSeg (100px) followed by a 90-degree right-turn BezierSeg arc
-## and wire up the vehicle's segment bookkeeping (segments, seg_start_arc,
-## total_length). The bezier goes right then down (clockwise in y-down screen
-## space) -> turn_direction() == +1, total_turn_angle ~ PI/2.
+## and wire up the vehicle's trajectory (segments + arc-length bookkeeping
+## via the Trajectory wrapper). The bezier goes right then down (clockwise
+## in y-down screen space) -> turn_direction() == +1, total_turn_angle ~ PI/2.
 func _setup_line_then_bezier(vc: VehicleController) -> void:
 	var line := LineSeg.new(Vector2(0, 0), Vector2(100, 0))
 	# Right turn: p0=(100,0), control=(150,0) [entry tangent right], p1=(150,50)
 	# [exit tangent down]. cross((50,0),(0,50)) = 2500 > 0 -> right (+1).
 	var bez := BezierSeg.new(Vector2(100, 0), Vector2(150, 0), Vector2(150, 50))
-	vc.segments = [line, bez]
-	vc.seg_start_arc = [0.0, line.length]
-	vc.total_length = line.length + bez.length
+	vc.trajectory = Trajectory.from_segments([line, bez])
+	vc.segments = vc.trajectory.segments
+	vc.total_length = vc.trajectory.total_length
 
 
 func test_braking_intensity_coast_down_glow() -> void:
@@ -245,7 +245,7 @@ func test_upcoming_turn_direction_before_turn() -> void:
 	_setup_line_then_bezier(vc)
 	# On the line, 20px before the arc, the bezier is within the look-ahead
 	# window -> direction should be the bezier's (right, +1), not 0.
-	var s: float = vc.seg_start_arc[1] - 20.0
+	var s: float = vc.trajectory.seg_start_arc[1] - 20.0
 	assert_eq(
 		vc._upcoming_turn_direction(s),
 		1,
@@ -273,7 +273,7 @@ func test_upcoming_turn_direction_inside_arc() -> void:
 	vc.turn_look_ahead = 60.0
 	_setup_line_then_bezier(vc)
 	# At the apex of the bezier itself, the segment overlaps the window -> +1.
-	var apex_s: float = vc.seg_start_arc[1] + vc.segments[1].length / 2.0
+	var apex_s: float = vc.trajectory.seg_start_arc[1] + vc.segments[1].length / 2.0
 	assert_eq(
 		vc._upcoming_turn_direction(apex_s),
 		1,
