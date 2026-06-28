@@ -34,6 +34,14 @@ var heading: float = 0.0
 var _debug_lane: bool = false
 
 
+func _get_configuration_warnings() -> PackedStringArray:
+	if spec == null:
+		return PackedStringArray(
+			["spec is unassigned — a default VehicleSpec will be created at runtime"]
+		)
+	return PackedStringArray()
+
+
 func _ready() -> void:
 	_ensure_spec()
 	_ensure_mover()

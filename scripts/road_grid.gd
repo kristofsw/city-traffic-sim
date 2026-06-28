@@ -1,3 +1,4 @@
+class_name RoadGrid
 extends Node2D
 ## Renders the procedural road grid and owns the RoadGraph used by the
 ## simulation. The active A->B route (soft cyan line + green start ring +

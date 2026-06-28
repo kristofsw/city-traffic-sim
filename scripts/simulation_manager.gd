@@ -1,20 +1,38 @@
+class_name SimulationManager
 extends Node2D
 ## Coordinates spawning, pathing, and lifecycle of vehicles.
 ## Phase 2/3: spawns a single vehicle, assigns an A* path, and repaths to a
 ## new random destination whenever the vehicle arrives.
+##
+## The RoadGrid dependency is injected by the Main entry-point node (see
+## main.gd) via the `road_grid` export, not via a hardcoded sibling string
+## path. Per the Godot scene-organization best practice, siblings should
+## not reference each other directly; the ancestor mediates.
 
 const VehicleScene := preload("res://scenes/vehicle.tscn")
+
+@export var road_grid: RoadGrid = null
 
 var vehicle: VehicleController = null
 var rng := RandomNumberGenerator.new()
 
-@onready var road_grid: Node2D = $"../RoadGrid"
+
+func _get_configuration_warnings() -> PackedStringArray:
+	if road_grid == null:
+		return PackedStringArray(["road_grid must be assigned (done by Main.gd)"])
+	return PackedStringArray()
 
 
 func _ready() -> void:
 	rng.randomize()
-	if road_grid and road_grid.graph == null:
-		road_grid._ready()
+	# Main.gd injects road_grid in its own _ready (runs after children are
+	# ready), so defer initialization to the next frame to ensure the
+	# reference is present. This replaces the old manual road_grid._ready()
+	# lifecycle call -- each node now manages its own lifecycle naturally.
+	await get_tree().process_frame
+	if road_grid == null:
+		printerr("[SimulationManager] road_grid not assigned — wire it via Main.gd")
+		return
 	print(
 		(
 			"[SimulationManager] grid cols=%d rows=%d nodes=%d"
