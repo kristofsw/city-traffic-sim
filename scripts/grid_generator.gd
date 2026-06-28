@@ -1,9 +1,12 @@
 class_name GridGenerator
-extends RefCounted
-
+extends MapGenerator
 ## Procedurally generates a uniform Manhattan-style road grid that fills the
 ## screen between a margin. Produces intersection coordinates and the edge
 ## list consumed by RoadGraph.
+##
+## A MapGenerator (Resource) subclass: the seam for expandable map
+## generation. Drop a saved GridGenerator.tres onto RoadGrid's
+## `map_generator` export, or let RoadGrid create one with its own exports.
 
 @export var screen_size: Vector2 = Vector2(1280, 720)
 @export var margin_px: float = 40.0
@@ -15,8 +18,6 @@ var cols: int = 0
 var rows: int = 0
 var block_w: float = 0.0
 var block_h: float = 0.0
-var nodes: Dictionary = {}  # Vector2i -> Vector2 world position
-var edges: Dictionary = {}  # Vector2i -> Array[Vector2i] (4-neighbourhood)
 
 
 func generate() -> void:
@@ -67,16 +68,4 @@ func boundary_nodes() -> Array[Vector2i]:
 		out.append(Vector2i(0, r))
 		if cols > 1:
 			out.append(Vector2i(cols - 1, r))
-	return out
-
-
-func all_nodes() -> Array[Vector2i]:
-	return nodes.keys()
-
-
-func far_from(key: Vector2i, min_distance: int) -> Array[Vector2i]:
-	var out: Array[Vector2i] = []
-	for k in nodes.keys():
-		if abs(k.x - key.x) + abs(k.y - key.y) >= min_distance:
-			out.append(k)
 	return out

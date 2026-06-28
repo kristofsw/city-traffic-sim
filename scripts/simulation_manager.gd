@@ -35,8 +35,8 @@ func _ready() -> void:
 		return
 	print(
 		(
-			"[SimulationManager] grid cols=%d rows=%d nodes=%d"
-			% [road_grid.generator.cols, road_grid.generator.rows, road_grid.graph.nodes.size()]
+			"[SimulationManager] map nodes=%d edges=%d"
+			% [road_grid.generator.nodes.size(), road_grid.generator.edges.size()]
 		)
 	)
 	_spawn_initial_vehicle()

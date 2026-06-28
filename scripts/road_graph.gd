@@ -1,14 +1,16 @@
 class_name RoadGraph
 extends RefCounted
 
-## Road graph built from a GridGenerator. Stores intersection world positions
-## and adjacency, and exposes A* pathfinding over the grid.
+## Road graph built from a MapGenerator. Stores intersection world positions
+## and adjacency, and exposes A* pathfinding over the map. Depends on the
+## MapGenerator interface, not any concrete generator, so new topologies
+## (hex, radial, OSM import) plug in without changes here.
 
 var nodes: Dictionary = {}  # Vector2i -> Vector2
 var edges: Dictionary = {}  # Vector2i -> Array[Vector2i]
 
 
-func build(generator: GridGenerator) -> void:
+func build(generator: MapGenerator) -> void:
 	nodes = generator.nodes.duplicate(true)
 	edges = generator.edges.duplicate(true)
 

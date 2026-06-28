@@ -22,8 +22,14 @@ const ROUTE_RING_INNER := Color(0.168, 0.168, 0.188, 1)  # asphalt core for ring
 @export var show_debug: bool = false
 @export var lane_offset: float = 12.0  # right-hand lane offset, matches vehicle
 @export var turn_radius_for_route: float = 22.0  # matches vehicle turn_radius
+## Optional map-generator preset (.tres). When assigned, RoadGrid uses a
+## duplicate of it (so a shared preset isn't mutated) instead of building a
+## default GridGenerator from the exports above. This is the seam for
+## expandable map generation: drop a HexGenerator.tres / RadialGenerator.tres
+## here to swap topologies without touching this script.
+@export var map_generator: MapGenerator = null
 
-var generator: GridGenerator = null
+var generator: MapGenerator = null
 var graph: RoadGraph = null
 var route_path: Array[Vector2i] = []
 var route_start: Vector2i = Vector2i.ZERO
@@ -36,12 +42,17 @@ func _ready() -> void:
 
 
 func _regenerate() -> void:
-	generator = GridGenerator.new()
-	generator.screen_size = screen_size
-	generator.margin_px = margin_px
-	generator.target_block_size = target_block_size
-	generator.road_width = road_width
-	generator.lane_width = lane_width
+	if map_generator != null:
+		# Use a duplicate so a shared preset resource isn't mutated by generate().
+		generator = map_generator.duplicate(true)
+	else:
+		var grid := GridGenerator.new()
+		grid.screen_size = screen_size
+		grid.margin_px = margin_px
+		grid.target_block_size = target_block_size
+		grid.road_width = road_width
+		grid.lane_width = lane_width
+		generator = grid
 	generator.generate()
 	graph = RoadGraph.new()
 	graph.build(generator)
@@ -147,7 +158,7 @@ func get_graph() -> RoadGraph:
 	return graph
 
 
-func get_generator() -> GridGenerator:
+func get_generator() -> MapGenerator:
 	return generator
 
 
