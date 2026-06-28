@@ -169,13 +169,14 @@ Drives the trajectory. The central abstraction is a single **arc-length cursor**
 7. `queue_redraw()`.
 
 **Speed model (`_target_speed_at`):**
-- **End ramp:** `end_factor = smoothstep((total_length - s) / _eff_decel)`. Smoothstep `t*t*(3-2t)` has zero derivative at `t=0` and `t=1`, giving a gentle stop with no kink. `_eff_decel = min(decel_distance, total_length * 0.4)` so short trips still fit the ramp.
-- **Turn slowdown (apex-based):** for the current segment, if `curvature_at > 0`, compute `progress = progress_fraction(local_s)` and a **triangle weight** `apex_weight = 1 - |progress - 0.5| * 2` (0 at entry, 1 at the apex, 0 at exit). `turn_factor = max(1 - turn_angle * turn_slowdown_factor * apex_weight, min_turn_speed_ratio)`. The car is slowest in the middle of each arc, exactly where curvature peaks.
+- **End ramp:** `end_factor = smoothstep((total_length - s) / _eff_decel)`. Smoothstep `t*t*(3-2t)` has zero derivative at `t=0` and `t=1`, giving a gentle stop with no kink. `_eff_decel = min(decel_distance, total_length * 0.4)` so short trips still fit the ramp. Sampled **only at the current `s`** — never at the look-ahead point — so the car never starts stopping early.
+- **Turn slowdown (apex-based with look-ahead):** the turn factor is computed by the pure helper `_turn_factor_at(s_pos)`: locate the segment containing `s_pos`, and if its `curvature_at > 0`, compute `progress = progress_fraction(local_s)` and a **triangle weight** `apex_weight = 1 - |progress - 0.5| * 2` (0 at entry, 1 at the apex, 0 at exit), then `turn_factor = max(1 - turn_angle * turn_slowdown_factor * apex_weight, min_turn_speed_ratio)`. On straight segments (and past `total_length`) it returns `1.0`.
+- **Look-ahead:** `_target_speed_at` takes `turn_factor = min(_turn_factor_at(s), _turn_factor_at(s + turn_look_ahead))`. Sampling `turn_look_ahead` px ahead and keeping the lower of the two makes the car **decelerate before entering a turn** (anticipative braking) instead of only reacting once inside the arc. Because `_turn_factor_at` returns `1.0` past the end, the look-ahead never spuriously lowers the target near the destination. Recovery after a turn is governed by the gentle `accel_rate`, so the car spools back up lazily rather than snapping to cruise.
 - `target = max_speed * end_factor * turn_factor`.
 
 Note the **start acceleration** is *not* modeled by `_target_speed_at` — there is no `start_factor` of 0 at `s=0`. This is deliberate: a target of 0 at the start would be a chicken-and-egg trap (the car could never begin moving). Instead, `current_speed` starts at 0 and ramps up via `accel_rate` toward `max_speed` naturally.
 
-**Brake lights (`_braking_intensity`):** returns `clamp((current_speed - target) / (decel_rate * 0.1), 0, 1)` — brightens taillights proportional to how hard the car is decelerating relative to its target.
+**Brake lights (`_braking_intensity`):** returns `clamp((current_speed - target) / (max_speed * 0.2), 0, 1)` — brightens taillights proportional to how hard the car is decelerating relative to its target. The denominator scales with `max_speed` so a modest overshoot lights the brakes fully; the baseline taillight alpha is low (0.35) so braking to 1.0 reads clearly.
 
 **Current segment estimation (`_estimate_current_segment`):** nearest grid edge to `position_on_road` by point-to-segment distance, returning the originating `Vector2i`. Used for diagnostics and as a stable per-trip segment key.
 

@@ -90,12 +90,13 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for layer-by-layer contracts, algorithm d
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `max_speed` | `120` | Cruising speed (px/s) |
-| `accel_rate` | `180` | Acceleration (px/s²) |
-| `decel_rate` | `300` | Braking deceleration, stronger than accel (px/s²) |
-| `decel_distance` | `60` | Distance before destination to start braking (px) |
-| `turn_slowdown_factor` | `0.3` | Speed reduction per radian of turn |
-| `min_turn_speed_ratio` | `0.35` | Floor on speed while in a turn (fraction of `max_speed`) |
+| `max_speed` | `80` | Cruising speed (px/s) |
+| `accel_rate` | `90` | Acceleration, gentle (px/s²) |
+| `decel_rate` | `130` | Braking deceleration, gentle (px/s²) |
+| `decel_distance` | `120` | Distance before destination to start braking (px) |
+| `turn_slowdown_factor` | `0.5` | Speed reduction per radian of turn |
+| `min_turn_speed_ratio` | `0.25` | Floor on speed while in a turn (fraction of `max_speed`) |
+| `turn_look_ahead` | `45` | Look-ahead distance for upcoming turns (px) |
 | `snap_distance` | `5` | Snap-to-arrival distance threshold (px) |
 | `snap_speed_threshold` | `15` | Below this speed, snap-to-arrival triggers (px/s) |
 | `lane_offset` | `12` | Right-hand lane offset (must match `RoadGrid`) |

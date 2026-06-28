@@ -17,12 +17,13 @@ const BODY_COLOR := Color(0.42, 0.45, 0.50, 1)  # #6b7280 muted gray-blue
 const HEADLIGHT_COLOR := Color(1.0, 0.96, 0.84, 1)  # #fff4d6
 const TAILLIGHT_COLOR := Color(1.0, 0.35, 0.30, 1)  # #ff5a4d
 
-@export var max_speed: float = 120.0  # px/s (cruising speed)
-@export var accel_rate: float = 180.0  # px/s^2 (acceleration)
-@export var decel_rate: float = 300.0  # px/s^2 (braking, stronger than accel)
-@export var decel_distance: float = 60.0  # px before destination to start braking
-@export var turn_slowdown_factor: float = 0.3  # speed reduction per radian of turn
-@export var min_turn_speed_ratio: float = 0.35  # never slower than this fraction in a turn
+@export var max_speed: float = 80.0  # px/s (cruising speed)
+@export var accel_rate: float = 90.0  # px/s^2 (acceleration, gentle)
+@export var decel_rate: float = 130.0  # px/s^2 (braking, gentle)
+@export var decel_distance: float = 120.0  # px before destination to start braking
+@export var turn_slowdown_factor: float = 0.5  # speed reduction per radian of turn
+@export var min_turn_speed_ratio: float = 0.25  # never slower than this fraction in a turn
+@export var turn_look_ahead: float = 45.0  # px; look ahead for upcoming turns
 @export var snap_distance: float = 5.0  # px; snap to arrival when this close
 @export var snap_speed_threshold: float = 15.0  # px/s; below this, snap to arrival
 @export var lane_offset: float = 12.0  # half-lane, right-hand drive
@@ -129,29 +130,53 @@ func _process(delta: float) -> void:
 
 
 ## Target speed at a given arc-length position. Combines:
-## - End ramp (decelerate to stop at destination, S-curve)
-## - Apex-based turn slowdown (slowest in the middle of each bezier arc)
-## The START acceleration is handled by the accel_rate itself (the car
-## ramps up from 0 naturally), so no start_factor is needed -- this avoids
-## a chicken-and-egg trap where target=0 at s=0 prevents the car from
-## ever moving. All factors are continuous (no jumps at segment boundaries).
+## - End ramp (decelerate to stop at destination, S-curve), sampled ONLY at
+##   the current position so the car never starts stopping early.
+## - Apex-based turn slowdown with LOOK-AHEAD: we sample the turn factor at
+##   the current position AND at `turn_look_ahead` px ahead, then keep the
+##   lower of the two. This makes the car slow BEFORE entering a turn
+##   (anticipative braking) instead of only reacting once inside the arc.
+##   Recovery after the turn is governed by the gentle accel_rate, so the
+##   car spools back up lazily rather than snapping to cruise.
+## The START acceleration is handled by accel_rate itself (the car ramps up
+## from 0 naturally), so no start_factor is needed -- this avoids a
+## chicken-and-egg trap where target=0 at s=0 prevents the car from ever
+## moving. All factors are continuous (no jumps at segment boundaries).
 func _target_speed_at(s_pos: float) -> float:
 	# End ramp: smoothstep from 1 to 0 over _eff_decel px before destination.
+	# Sampled ONLY at the current position (never at the look-ahead point),
+	# otherwise the car would begin stopping turn_look_ahead px early.
 	var end_factor: float = 1.0
 	if _eff_decel > 0.001:
 		end_factor = _smoothstep((total_length - s_pos) / _eff_decel)
-	# Turn slowdown: apex-based (slowest in the middle of the arc).
-	var turn_factor: float = 1.0
-	if seg_index < segments.size():
-		var seg: TrajectorySegment = segments[seg_index]
-		var turn_angle: float = seg.curvature_at(0.0)
-		if turn_angle > 0.001:
-			var progress: float = seg.progress_fraction(s_pos - seg_start_arc[seg_index])
-			# Triangle weight: 0 at entry, 1 at apex (progress=0.5), 0 at exit.
-			var apex_weight: float = 1.0 - abs(progress - 0.5) * 2.0
-			turn_factor = 1.0 - turn_angle * turn_slowdown_factor * apex_weight
-			turn_factor = max(turn_factor, min_turn_speed_ratio)
+	# Turn slowdown with look-ahead: take the lower of "now" and "ahead".
+	var turn_factor: float = min(_turn_factor_at(s_pos), _turn_factor_at(s_pos + turn_look_ahead))
 	return max_speed * end_factor * turn_factor
+
+
+## Turn slowdown factor at a given arc-length position. Returns 1.0 on
+## straight segments, and an apex-weighted reduction on bezier arcs (slowest
+## in the middle of the arc). Past the end of the trajectory returns 1.0
+## (no turn there), which keeps the look-ahead from spuriously lowering the
+## target near the destination. Pure and side-effect free for testability.
+func _turn_factor_at(s_pos: float) -> float:
+	if segments.is_empty():
+		return 1.0
+	# Clamp to trajectory bounds: past the end there is no turn.
+	var s_clamped: float = clamp(s_pos, 0.0, total_length)
+	# Locate the segment containing s_clamped (linear scan; small arrays).
+	var idx: int = 0
+	while idx < segments.size() - 1 and s_clamped >= seg_start_arc[idx] + segments[idx].length:
+		idx += 1
+	var seg: TrajectorySegment = segments[idx]
+	var turn_angle: float = seg.curvature_at(0.0)
+	if turn_angle <= 0.001:
+		return 1.0
+	var progress: float = seg.progress_fraction(s_clamped - seg_start_arc[idx])
+	# Triangle weight: 0 at entry, 1 at apex (progress=0.5), 0 at exit.
+	var apex_weight: float = 1.0 - abs(progress - 0.5) * 2.0
+	var factor: float = 1.0 - turn_angle * turn_slowdown_factor * apex_weight
+	return max(factor, min_turn_speed_ratio)
 
 
 ## Smoothstep: S-curve interpolation. Zero derivative at t=0 and t=1
@@ -216,7 +241,10 @@ func _braking_intensity() -> float:
 	var target: float = _target_speed_at(s)
 	if current_speed <= target:
 		return 0.0
-	return clamp((current_speed - target) / (decel_rate * 0.1), 0.0, 1.0)
+	# Denominator scales with max_speed so a modest overshoot lights the
+	# brakes fully -- previously decel_rate*0.1 was too large a denominator,
+	# so the rate-limited current_speed rarely overshot enough to register.
+	return clamp((current_speed - target) / (max_speed * 0.2), 0.0, 1.0)
 
 
 func _draw() -> void:
@@ -246,7 +274,8 @@ func _draw() -> void:
 	# Taillights at rear edge -- brighten when braking.
 	var braking: float = _braking_intensity()
 	var brake_radius: float = 1.8 + braking * 1.5
-	var taillight_alpha: float = 0.6 + braking * 0.4
+	# Low baseline alpha so braking (up to 1.0) is clearly visible against it.
+	var taillight_alpha: float = 0.35 + braking * 0.65
 	var taillight := Color(TAILLIGHT_COLOR.r, TAILLIGHT_COLOR.g, TAILLIGHT_COLOR.b, taillight_alpha)
 	var rear_local := Vector2(-length * 0.5, 0.0)
 	var rear_world := Vector2(
