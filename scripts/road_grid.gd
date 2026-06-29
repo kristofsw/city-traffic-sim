@@ -105,11 +105,11 @@ func _draw() -> void:
 				var to: Vector2 = graph.world_of(n)
 				draw_line(from, to, ASPHALT_COLOR, road_width, true)
 				_draw_dashed_line(from, to, LANE_MARK_COLOR, 1.5, 16.0, 12.0)
-	# Intersection squares to mask seam artifacts.
+	# Intersection circles to mask seam artifacts (angle-agnostic; works for
+	# any intersection geometry, not just 90° grid crossings).
 	for key in graph.nodes:
 		var p: Vector2 = graph.world_of(key)
-		var r: float = road_width * 0.5
-		draw_rect(Rect2(p.x - r, p.y - r, r * 2.0, r * 2.0), ASPHALT_COLOR)
+		draw_circle(p, road_width * 0.5, ASPHALT_COLOR)
 	# Always-on route visualization.
 	_draw_route()
 	# Debug overlay (F1): raw graph nodes + edges.
