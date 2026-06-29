@@ -158,3 +158,74 @@ func test_right_lane_invariant_with_obstacle_holes() -> void:
 		-0.5,
 		"car should never enter oncoming lane around holes (signed offset >= -0.5)"
 	)
+
+
+func test_right_lane_invariant_on_street_network() -> void:
+	# Verify the right-lane invariant holds on the organic StreetNetworkGenerator
+	# (varied angles, T-junctions, non-aligned intersections). The trajectory
+	# builder offsets to the right of each edge regardless of angle, so the
+	# car should stay on the right lane through angled turns.
+	var gen := StreetNetworkGenerator.new()
+	gen.screen_size = Vector2(1280, 720)
+	gen.margin_px = 40.0
+	gen.target_block_size = 128.0
+	gen.avenue_count = 5
+	gen.side_street_density = 0.5
+	gen.angle_jitter = 0.35
+	gen.snap_tolerance = 24.0
+	gen.rng.seed = 42
+	gen.generate()
+	var graph := RoadGraph.new()
+	graph.build(gen)
+
+	var boundary := gen.boundary_nodes()
+	assert_gt(boundary.size(), 1, "street network should have boundary nodes")
+	var start := boundary[0]
+	var goal := boundary[boundary.size() - 1]
+	var path := graph.find_path(start, goal)
+	assert_gt(path.size(), 1, "path should exist across the street network")
+
+	var traj := TrajectoryBuilder.build_trajectory(graph, path, 12.0, 22.0)
+	assert_false(traj.is_empty(), "trajectory should have segments on the street network")
+
+	# Simulate driving the full trajectory; check the right-lane invariant.
+	var total_length := traj.total_length
+	var s := 0.0
+	var speed := 120.0
+	var delta := 1.0 / 60.0
+	var min_signed_offset := INF
+	var seg_hint := 0
+
+	while s < total_length:
+		seg_hint = traj.segment_index_at(s, seg_hint)
+		var pos := traj.position_at(s, seg_hint)
+
+		# Signed lane offset relative to the nearest path segment.
+		var best_d := INF
+		var best_a := Vector2.ZERO
+		var best_b := Vector2.ZERO
+		for i in range(path.size() - 1):
+			var a: Vector2 = graph.world_of(path[i])
+			var b: Vector2 = graph.world_of(path[i + 1])
+			var ab: Vector2 = b - a
+			var t: float = clamp((pos - a).dot(ab) / ab.length_squared(), 0.0, 1.0)
+			var proj: Vector2 = a + ab * t
+			var dist: float = pos.distance_to(proj)
+			if dist < best_d:
+				best_d = dist
+				best_a = a
+				best_b = b
+		var dir := (best_b - best_a).normalized()
+		var perp := Vector2(-dir.y, dir.x)
+		var signed_offset := (pos - best_a).dot(perp)
+		if signed_offset < min_signed_offset:
+			min_signed_offset = signed_offset
+
+		s += speed * delta
+
+	# The car should never enter the oncoming lane on the street network.
+	assert_gte(
+		min_signed_offset,
+		-0.5,
+		"car should never enter oncoming lane on street network (signed offset >= -0.5)"
+	)
