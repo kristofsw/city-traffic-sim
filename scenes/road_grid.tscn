@@ -10,3 +10,4 @@ target_block_size = 128.0
 road_width = 48.0
 lane_width = 24.0
 show_debug = false
+generator_type = &"street_network"

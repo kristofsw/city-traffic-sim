@@ -23,9 +23,20 @@ const ROUTE_RING_INNER := Color(0.168, 0.168, 0.188, 1)  # asphalt core for ring
 @export var show_debug: bool = false
 @export var lane_offset: float = 12.0  # right-hand lane offset, matches vehicle
 @export var turn_radius_for_route: float = 22.0  # matches vehicle turn_radius
+## Which built-in generator to use when no `map_generator` preset is assigned.
+## "grid" = Manhattan grid (GridGenerator); "street_network" = organic
+## street network (StreetNetworkGenerator). The `map_generator` export
+## always takes priority if set.
+@export var generator_type: StringName = &"grid"
+## StreetNetworkGenerator params (used only when generator_type == "street_network"
+## and no map_generator preset is assigned).
+@export var avenue_count: int = 5
+@export var side_street_density: float = 0.5
+@export var angle_jitter: float = 0.35
+@export var snap_tolerance: float = 24.0
 ## Optional map-generator preset (.tres). When assigned, RoadGrid uses a
 ## duplicate of it (so a shared preset isn't mutated) instead of building a
-## default GridGenerator from the exports above. This is the seam for
+## default generator from the exports above. This is the seam for
 ## expandable map generation: drop a HexGenerator.tres / RadialGenerator.tres
 ## here to swap topologies without touching this script.
 @export var map_generator: MapGenerator = null
@@ -48,6 +59,18 @@ func _regenerate() -> void:
 	if map_generator != null:
 		# Use a duplicate so a shared preset resource isn't mutated by generate().
 		generator = map_generator.duplicate(true)
+	elif generator_type == &"street_network":
+		var sn := StreetNetworkGenerator.new()
+		sn.screen_size = screen_size
+		sn.margin_px = margin_px
+		sn.target_block_size = target_block_size
+		sn.road_width = road_width
+		sn.lane_width = lane_width
+		sn.avenue_count = avenue_count
+		sn.side_street_density = side_street_density
+		sn.angle_jitter = angle_jitter
+		sn.snap_tolerance = snap_tolerance
+		generator = sn
 	else:
 		var grid := GridGenerator.new()
 		grid.screen_size = screen_size
