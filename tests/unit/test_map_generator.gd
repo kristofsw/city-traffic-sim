@@ -18,6 +18,7 @@ func test_grid_generator_satisfies_contract() -> void:
 	gen.screen_size = Vector2(1280, 720)
 	gen.margin_px = 40.0
 	gen.target_block_size = 128.0
+	gen.obstacle_count = 0  # predictable full grid for contract test
 	gen.generate()
 	# Contract: nodes and edges populated.
 	assert_gt(gen.nodes.size(), 0, "generate() should populate nodes")
@@ -37,6 +38,7 @@ func test_road_graph_build_accepts_map_generator() -> void:
 	# RoadGraph.build is typed MapGenerator; pass a GridGenerator (subclass)
 	# through the base type to verify the seam.
 	var gen: MapGenerator = GridGenerator.new()
+	(gen as GridGenerator).obstacle_count = 0  # predictable full grid
 	gen.generate()
 	var graph := RoadGraph.new()
 	graph.build(gen)

@@ -7,6 +7,7 @@ func _build_test_graph() -> RoadGraph:
 	gen.screen_size = Vector2(400, 400)
 	gen.margin_px = 40.0
 	gen.target_block_size = 128.0
+	gen.obstacle_count = 0  # predictable full grid for pathfinding tests
 	gen.generate()
 	var graph := RoadGraph.new()
 	graph.build(gen)
@@ -15,6 +16,7 @@ func _build_test_graph() -> RoadGraph:
 
 func test_build_copies_data() -> void:
 	var gen := GridGenerator.new()
+	gen.obstacle_count = 0  # predictable full grid
 	gen.generate()
 	var graph := RoadGraph.new()
 	graph.build(gen)

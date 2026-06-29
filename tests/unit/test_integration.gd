@@ -8,6 +8,7 @@ func test_full_trip_right_lane_invariant() -> void:
 	gen.screen_size = Vector2(1280, 720)
 	gen.margin_px = 40.0
 	gen.target_block_size = 128.0
+	gen.obstacle_count = 0  # predictable full grid for invariant test
 	gen.generate()
 	var graph := RoadGraph.new()
 	graph.build(gen)
@@ -68,6 +69,7 @@ func test_full_trip_segment_contiguity() -> void:
 	gen.screen_size = Vector2(1280, 720)
 	gen.margin_px = 40.0
 	gen.target_block_size = 128.0
+	gen.obstacle_count = 0  # predictable full grid for contiguity test
 	gen.generate()
 	var graph := RoadGraph.new()
 	graph.build(gen)

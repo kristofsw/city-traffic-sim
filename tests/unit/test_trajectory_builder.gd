@@ -7,6 +7,7 @@ func _build_test_graph() -> RoadGraph:
 	gen.screen_size = Vector2(400, 400)
 	gen.margin_px = 40.0
 	gen.target_block_size = 128.0
+	gen.obstacle_count = 0  # predictable full grid for trajectory tests
 	gen.generate()
 	var graph := RoadGraph.new()
 	graph.build(gen)

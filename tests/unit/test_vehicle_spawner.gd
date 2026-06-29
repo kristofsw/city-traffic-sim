@@ -11,6 +11,7 @@ func _build_spawner() -> VehicleSpawner:
 	gen.screen_size = Vector2(1280, 720)
 	gen.margin_px = 40.0
 	gen.target_block_size = 128.0
+	gen.obstacle_count = 0  # predictable full grid for spawn policy tests
 	gen.generate()
 	var graph := RoadGraph.new()
 	graph.build(gen)

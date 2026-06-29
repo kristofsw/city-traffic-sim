@@ -7,6 +7,7 @@ extends Node2D
 
 const ASPHALT_COLOR := Color(0.168, 0.168, 0.188, 1)  # #2b2b30
 const LANE_MARK_COLOR := Color(0.353, 0.353, 0.392, 1)  # #5a5a64
+const PARK_COLOR := Color(0.165, 0.227, 0.165, 1)  # #2a3a2a subtle park fill
 const DEBUG_NODE_COLOR := Color(1.0, 0.85, 0.30, 0.9)
 const DEBUG_EDGE_COLOR := Color(0.30, 0.70, 1.0, 0.6)
 const ROUTE_LINE_COLOR := Color(0.50, 0.85, 1.0, 0.40)  # #7fd8ff ~40%
@@ -66,6 +67,13 @@ func _regenerate() -> void:
 func _draw() -> void:
 	if graph == null:
 		return
+	# Park fills for carved obstacle holes (drawn under roads so road
+	# edges around holes render cleanly).
+	if generator is GridGenerator:
+		var grid := generator as GridGenerator
+		for center in grid.hole_centers:
+			var r: float = grid.hole_radius_px + road_width * 0.5
+			draw_circle(center, r, PARK_COLOR)
 	# Road surface + lane markings: single pass over edges (each edge once).
 	for key in graph.edges:
 		var from: Vector2 = graph.world_of(key)

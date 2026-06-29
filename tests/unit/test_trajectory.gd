@@ -138,6 +138,7 @@ func test_build_trajectory_equals_build_plus_from_segments() -> void:
 	gen.screen_size = Vector2(400, 400)
 	gen.margin_px = 40.0
 	gen.target_block_size = 128.0
+	gen.obstacle_count = 0  # predictable full grid so (1,1) exists
 	gen.generate()
 	var graph := RoadGraph.new()
 	graph.build(gen)
