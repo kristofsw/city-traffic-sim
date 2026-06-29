@@ -46,13 +46,17 @@ func spawn(parent: Node, arrived_handler: Callable) -> VehicleController:
 	return vehicle
 
 
-## Pick a new goal from the vehicle's last node and assign it. Called by
-## SimulationManager when a vehicle's `arrived` signal fires.
+## Pick a fresh boundary spawn point and assign a new path to a far goal.
+## Called by SimulationManager when a vehicle's `arrived` signal fires.
+## Each trip is a clean A->B unrelated to the previous one: the vehicle
+## teleports to a new boundary node (assign_path resets s=0 and emits
+## position_changed, moving the vehicle to the new start's world position).
 func repath(vehicle: VehicleController) -> void:
-	if vehicle.path.is_empty():
+	if not generator:
+		push_error("[VehicleSpawner] no generator set")
 		return
-	var last: Vector2i = vehicle.path[vehicle.path.size() - 1]
-	assign_path_from(vehicle, last)
+	var start := pick_start()
+	assign_path_from(vehicle, start)
 
 
 ## Pick a boundary node as a spawn point.

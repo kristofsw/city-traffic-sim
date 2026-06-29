@@ -62,19 +62,18 @@ func test_spawn_creates_vehicle_and_assigns_path() -> void:
 	assert_ne(v.trajectory, null, "spawn should build a trajectory")
 
 
-func test_repath_assigns_new_path_from_last_node() -> void:
+func test_repath_uses_fresh_boundary_spawn() -> void:
 	var s := _build_spawner()
 	var v: VehicleController = s.spawn(self, _dummy_arrived)
 	autofree(v)
-	var first_path := v.path.duplicate()
+	var first_last: Vector2i = v.path[v.path.size() - 1]
 	s.repath(v)
 	assert_gt(v.path.size(), 1, "repath should assign a new multi-hop path")
-	# The new path should start where the old one ended.
-	assert_eq(
-		v.path[0],
-		first_path[first_path.size() - 1],
-		"repath should start from the last node of the previous path"
-	)
+	# The new path should start at a boundary node (fresh spawn), NOT chain
+	# from the previous trip's last node.
+	var boundary: Array[Vector2i] = s.generator.boundary_nodes()
+	assert_true(boundary.has(v.path[0]), "repath should start from a fresh boundary node")
+	assert_ne(v.path[0], first_last, "repath should not chain from the previous trip's last node")
 
 
 func _dummy_arrived(_v: VehicleController) -> void:
