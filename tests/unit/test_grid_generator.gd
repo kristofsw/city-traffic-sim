@@ -90,3 +90,51 @@ func test_single_column_grid() -> void:
 	gen.generate()
 	assert_gte(gen.cols, 1, "cols should be at least 1")
 	assert_gte(gen.rows, 1, "rows should be at least 1")
+
+
+func test_uniform_block_spacing_when_jitter_zero() -> void:
+	var gen := GridGenerator.new()
+	gen.screen_size = Vector2(1280, 720)
+	gen.margin_px = 40.0
+	gen.target_block_size = 128.0
+	gen.block_jitter = 0.0
+	gen.generate()
+	# With jitter 0 every x-gap should equal block_w.
+	for c in range(1, gen.cols):
+		var gap: float = gen._col_x[c] - gen._col_x[c - 1]
+		assert_almost_eq(gap, gen.block_w, 0.001, "jitter=0 x-gaps should equal block_w")
+	for r in range(1, gen.rows):
+		var gap: float = gen._row_y[r] - gen._row_y[r - 1]
+		assert_almost_eq(gap, gen.block_h, 0.001, "jitter=0 y-gaps should equal block_h")
+
+
+func test_non_uniform_block_spacing_when_jitter_nonzero() -> void:
+	var gen := GridGenerator.new()
+	gen.screen_size = Vector2(1280, 720)
+	gen.margin_px = 40.0
+	gen.target_block_size = 128.0
+	gen.block_jitter = 0.5
+	gen.rng.seed = 42
+	gen.generate()
+	# With jitter > 0 at least one x-gap should differ from block_w.
+	var x_uniform: bool = true
+	for c in range(1, gen.cols):
+		var gap: float = gen._col_x[c] - gen._col_x[c - 1]
+		if abs(gap - gen.block_w) > 0.01:
+			x_uniform = false
+	assert_false(x_uniform, "jitter=0.5 should produce non-uniform x-gaps")
+	# The cumulative width must still fill the inner area exactly.
+	var inner_w: float = gen.screen_size.x - 2.0 * gen.margin_px
+	assert_almost_eq(gen._col_x[gen.cols - 1], inner_w, 0.5, "x offsets must fill inner_w")
+
+
+func test_non_uniform_total_height_fits() -> void:
+	var gen := GridGenerator.new()
+	gen.screen_size = Vector2(1280, 720)
+	gen.margin_px = 40.0
+	gen.target_block_size = 128.0
+	gen.block_jitter = 0.3
+	gen.rng.seed = 7
+	gen.generate()
+	var inner_h: float = gen.screen_size.y - 2.0 * gen.margin_px
+	assert_almost_eq(gen._row_y[gen.rows - 1], inner_h, 0.5, "y offsets must fill inner_h")
