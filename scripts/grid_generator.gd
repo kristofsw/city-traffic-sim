@@ -242,6 +242,18 @@ func grid_to_world(key: Vector2i) -> Vector2:
 	return nodes[key]
 
 
+## Grid-specific: Manhattan distance on Vector2i keys (hops), preserving
+## the hop-count semantics GridGenerator tests rely on. The base
+## MapGenerator.far_from now uses world Euclidean distance.
+func far_from(key: Vector2i, min_distance: float) -> Array:
+	var out: Array = []
+	var min_int: int = int(min_distance)
+	for k in nodes.keys():
+		if abs(k.x - key.x) + abs(k.y - key.y) >= min_int:
+			out.append(k)
+	return out
+
+
 func _connect(a: Vector2i, b: Vector2i) -> void:
 	edges[a].append(b)
 	edges[b].append(a)

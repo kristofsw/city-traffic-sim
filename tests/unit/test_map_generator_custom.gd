@@ -26,3 +26,14 @@ func _connect(a: Vector2i, b: Vector2i) -> void:
 func boundary_nodes() -> Array[Vector2i]:
 	# All 4 nodes are on the perimeter of a 2x2 grid.
 	return nodes.keys()
+
+
+## Grid-style Manhattan-on-keys override (this fixture mimics a grid, so
+## the hop-distance semantics are meaningful for the contract test).
+func far_from(key: Vector2i, min_distance: float) -> Array:
+	var out: Array = []
+	var min_int: int = int(min_distance)
+	for k in nodes.keys():
+		if abs(k.x - key.x) + abs(k.y - key.y) >= min_int:
+			out.append(k)
+	return out

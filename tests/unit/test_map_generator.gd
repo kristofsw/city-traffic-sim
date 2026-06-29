@@ -27,8 +27,9 @@ func test_grid_generator_satisfies_contract() -> void:
 	assert_eq(gen.all_nodes().size(), gen.nodes.size(), "all_nodes should return all keys")
 	# Contract: boundary_nodes returns a non-empty perimeter.
 	assert_gt(gen.boundary_nodes().size(), 0, "boundary_nodes should return perimeter")
-	# Contract: far_from honors min_distance.
-	var far := gen.far_from(Vector2i(0, 0), 6)
+	# Contract: far_from honors min_distance (GridGenerator uses Manhattan
+	# on keys; base MapGenerator uses world Euclidean).
+	var far := gen.far_from(Vector2i(0, 0), 6.0)
 	for k in far:
 		var d: int = abs(k.x) + abs(k.y)
 		assert_gte(d, 6, "far_from node should be at least min_distance away")
@@ -59,7 +60,7 @@ func test_custom_subclass_works_through_seam() -> void:
 	# All four nodes are mutually reachable via the square edges.
 	var p := graph.find_path(Vector2i(0, 0), Vector2i(1, 1))
 	assert_gte(p.size(), 3, "custom generator should pathfind across the square")
-	# far_from uses the base implementation (Manhattan on Vector2i keys).
-	var far := gen.far_from(Vector2i(0, 0), 2)
+	# far_from: this custom fixture overrides with Manhattan-on-keys.
+	var far := gen.far_from(Vector2i(0, 0), 2.0)
 	assert_eq(far.size(), 1, "only (1,1) is >=2 Manhattan from (0,0) in a 2x2 grid")
 	assert_eq(far[0], Vector2i(1, 1), "far node should be (1,1)")

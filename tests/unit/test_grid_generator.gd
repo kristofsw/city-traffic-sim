@@ -82,7 +82,7 @@ func test_far_from() -> void:
 	gen.target_block_size = 128.0
 	gen.obstacle_count = 0
 	gen.generate()
-	var far := gen.far_from(Vector2i(5, 3), 6)
+	var far := gen.far_from(Vector2i(5, 3), 6.0)
 	for key in far:
 		var dist: int = abs(key.x - 5) + abs(key.y - 3)
 		assert_gte(dist, 6, "far_from node should be at least min_distance away")

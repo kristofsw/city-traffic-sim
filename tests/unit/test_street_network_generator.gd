@@ -65,8 +65,7 @@ func test_far_from_uses_world_distance() -> void:
 	var keys: Array = gen.nodes.keys()
 	var key: Vector2i = keys[0]
 	var ref_pos: Vector2 = gen.nodes[key]
-	# Use an int here; Step 2 unifies far_from on float world distance.
-	var far: Array = gen.far_from(key, 400)
+	var far: Array = gen.far_from(key, 400.0)
 	for k in far:
 		var d: float = gen.nodes[k].distance_to(ref_pos)
 		assert_gte(d, 400.0, "far_from node should be >= 400px in world distance")

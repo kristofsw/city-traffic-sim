@@ -345,17 +345,17 @@ func boundary_nodes() -> Array[Vector2i]:
 	return _boundary
 
 
-## World Euclidean distance override (the base uses Manhattan on Vector2i
-## keys, which is meaningless for sequential-id keys). NOTE: Step 2 will
-## unify the base signature to float; for now we match the base int
-## signature and cast.
-func far_from(key: Vector2i, min_distance: int) -> Array:
+## World Euclidean distance override (matches the base MapGenerator
+## signature; StreetNetworkGenerator uses sequential-id keys so
+## Manhattan-on-keys would be meaningless -- but the base now uses world
+## distance too, so this override is technically redundant. Kept explicit
+## for clarity and as a documented contract.
+func far_from(key: Vector2i, min_distance: float) -> Array:
 	var out: Array = []
 	if not nodes.has(key):
 		return out
 	var ref_pos: Vector2 = nodes[key]
-	var min_d: float = float(min_distance)
 	for k in nodes.keys():
-		if nodes[k].distance_to(ref_pos) >= min_d:
+		if nodes[k].distance_to(ref_pos) >= min_distance:
 			out.append(k)
 	return out

@@ -32,7 +32,7 @@ func test_pick_start_returns_boundary_node() -> void:
 
 func test_pick_goal_honors_min_distance() -> void:
 	var s := _build_spawner()
-	s.min_trip_distance = 6
+	s.min_trip_distance = 6.0
 	var goal := s.pick_goal(Vector2i(0, 0))
 	var d: int = abs(goal.x) + abs(goal.y)
 	assert_gte(d, 6, "pick_goal should be at least min_trip_distance away")
@@ -40,7 +40,7 @@ func test_pick_goal_honors_min_distance() -> void:
 
 func test_pick_goal_falls_back_when_no_far_nodes() -> void:
 	var s := _build_spawner()
-	s.min_trip_distance = 999  # no node is that far
+	s.min_trip_distance = 999.0  # no node is that far
 	var goal := s.pick_goal(Vector2i(0, 0))
 	# Should fall back to all_nodes() and still return a valid node.
 	assert_true(s.generator.all_nodes().has(goal), "pick_goal fallback should return a valid node")

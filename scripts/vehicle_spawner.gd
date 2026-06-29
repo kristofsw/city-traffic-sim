@@ -21,7 +21,7 @@ var vehicle_scene: PackedScene = null
 var graph: RoadGraph = null
 var generator: MapGenerator = null
 var rng: RandomNumberGenerator = null
-var min_trip_distance: int = 6  # Manhattan; fallback to all_nodes if too few candidates
+var min_trip_distance: float = 600.0  # world px; fallback to all_nodes if too few candidates
 var spec_pool: Array[VehicleSpec] = []  # empty -> each vehicle uses its default spec
 
 
@@ -68,7 +68,7 @@ func pick_start() -> Vector2i:
 	return boundary[rng.randi() % boundary.size()]
 
 
-## Pick a goal node at least `min_trip_distance` (Manhattan) from `current`.
+## Pick a goal node at least `min_trip_distance` (world px) from `current`.
 func pick_goal(current: Vector2i) -> Vector2i:
 	var candidates: Array = generator.far_from(current, min_trip_distance)
 	if candidates.is_empty():

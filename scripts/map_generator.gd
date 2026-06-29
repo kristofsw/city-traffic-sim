@@ -37,12 +37,16 @@ func all_nodes() -> Array:
 	return nodes.keys()
 
 
-## Nodes at least `min_distance` (Manhattan, on Vector2i keys) from `key`.
-## Default works for any grid using Vector2i keys; subclasses with
-## non-gridded topologies should override with an appropriate metric.
-func far_from(key: Vector2i, min_distance: int) -> Array:
+## Nodes at least `min_distance` (world Euclidean, px) from `key`.
+## Default works for any generator using Vector2i keys whose world positions
+## are meaningful; GridGenerator (Manhattan-on-keys) overrides this for
+## backward compatibility with its hop-based semantics.
+func far_from(key: Vector2i, min_distance: float) -> Array:
 	var out: Array = []
+	if not nodes.has(key):
+		return out
+	var ref_pos: Vector2 = nodes[key]
 	for k in nodes.keys():
-		if abs(k.x - key.x) + abs(k.y - key.y) >= min_distance:
+		if nodes[k].distance_to(ref_pos) >= min_distance:
 			out.append(k)
 	return out
