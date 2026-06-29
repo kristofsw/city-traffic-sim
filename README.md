@@ -4,8 +4,8 @@ A minimalist, top-down city traffic simulation built in Godot 4.7, designed as a
 
 ## Features
 
-- **Procedural road grid** — a uniform Manhattan-style grid that fills the screen, recomputed from a target block size.
-- **A\* pathfinding** — continuous A→B routing over the grid graph with Manhattan-distance heuristic; vehicles repath to a new random destination on every arrival.
+- **Procedural road grid** — a Manhattan-style grid that fills the screen, recomputed from a target block size. Optional `block_jitter` varies block spacing for visual rhythm, and `obstacle_count`/`obstacle_radius` carve park-filled holes out of the interior, forcing A\* to route multi-turn detours instead of trivial one-turn L-shapes.
+- **A\* pathfinding** — continuous A→B routing over the grid graph with Manhattan-distance heuristic; vehicles repath to a **fresh boundary spawn point** and a new far goal on every arrival, so each trip is independent of the previous.
 - **Arc-length bezier turns** — turns through intersections are quadratic bezier arcs, G1-continuous with the incoming/outgoing straights, so position and heading stay perfectly coupled.
 - **Right-hand lane following** — all trajectories are offset to the right-hand lane; the car never enters oncoming traffic.
 - **Acceleration / deceleration** — S-curve ramp up from standstill, smoothstep deceleration to stop at the destination, and apex-based slowdown through turns (slowest in the middle of each arc), with a windowed look-ahead so the car brakes before the turn and sustains the corner speed.
@@ -100,6 +100,9 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for layer-by-layer contracts, algorithm d
 | `lane_width` | `24` | Single lane width (px) |
 | `lane_offset` | `12` | Right-hand perpendicular offset (half a lane) |
 | `turn_radius_for_route` | `22` | Pull-back before intersection used by the route line (matches the vehicle) |
+| `block_jitter` | `0` | Fraction of block size to vary each step by (0 = uniform grid, 0.25 = ±25% per step; renormalized to fill the area) |
+| `obstacle_count` | `3` | Number of obstacle hole clusters carved out of the grid interior (0 = no holes; holes force A* to detour, producing multi-turn paths) |
+| `obstacle_radius` | `2` | Radius of each hole cluster in graph hops (adjacency steps; boundary nodes are protected and never removed) |
 
 ### Vehicle (configurable via `VehicleSpec` Resource on `vehicle.tscn`)
 

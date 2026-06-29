@@ -88,3 +88,73 @@ func test_full_trip_segment_contiguity() -> void:
 			2.0,
 			"segment %d end should connect to segment %d start" % [i, i + 1]
 		)
+
+
+func test_right_lane_invariant_with_obstacle_holes() -> void:
+	# Verify the right-lane invariant holds when routing around obstacle
+	# holes — the trajectory should still stay on the right lane through
+	# the detour. Uses a seeded rng for reproducibility.
+	var gen := GridGenerator.new()
+	gen.screen_size = Vector2(1280, 720)
+	gen.margin_px = 40.0
+	gen.target_block_size = 128.0
+	gen.obstacle_count = 3
+	gen.obstacle_radius = 2
+	gen.rng.seed = 42
+	gen.generate()
+	var graph := RoadGraph.new()
+	graph.build(gen)
+
+	# Pick two boundary nodes far apart; the connectivity prune guarantees
+	# a path exists between them.
+	var boundary := gen.boundary_nodes()
+	assert_gt(boundary.size(), 1, "should have boundary nodes")
+	var start := boundary[0]
+	var goal := boundary[boundary.size() - 1]
+	var path := graph.find_path(start, goal)
+	assert_gt(path.size(), 1, "path should exist around holes between boundary nodes")
+
+	var traj := TrajectoryBuilder.build_trajectory(graph, path, 12.0, 22.0)
+	assert_false(traj.is_empty(), "trajectory should have segments around holes")
+
+	# Simulate driving the full trajectory; check the right-lane invariant.
+	var total_length := traj.total_length
+	var s := 0.0
+	var speed := 120.0
+	var delta := 1.0 / 60.0
+	var min_signed_offset := INF
+	var seg_hint := 0
+
+	while s < total_length:
+		seg_hint = traj.segment_index_at(s, seg_hint)
+		var pos := traj.position_at(s, seg_hint)
+
+		# Signed lane offset relative to the nearest path segment.
+		var best_d := INF
+		var best_a := Vector2.ZERO
+		var best_b := Vector2.ZERO
+		for i in range(path.size() - 1):
+			var a: Vector2 = graph.world_of(path[i])
+			var b: Vector2 = graph.world_of(path[i + 1])
+			var ab: Vector2 = b - a
+			var t: float = clamp((pos - a).dot(ab) / ab.length_squared(), 0.0, 1.0)
+			var proj: Vector2 = a + ab * t
+			var dist: float = pos.distance_to(proj)
+			if dist < best_d:
+				best_d = dist
+				best_a = a
+				best_b = b
+		var dir := (best_b - best_a).normalized()
+		var perp := Vector2(-dir.y, dir.x)
+		var signed_offset := (pos - best_a).dot(perp)
+		if signed_offset < min_signed_offset:
+			min_signed_offset = signed_offset
+
+		s += speed * delta
+
+	# The car should never enter the oncoming lane, even around holes.
+	assert_gte(
+		min_signed_offset,
+		-0.5,
+		"car should never enter oncoming lane around holes (signed offset >= -0.5)"
+	)
