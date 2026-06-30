@@ -107,6 +107,13 @@ var _arrived_emitted: bool = false
 var _last_braking: float = 0.0
 var _last_turn_dir: int = 0
 var _default_spec: VehicleSpec = null  # lazily created for spec-less tests
+# Adaptive Cruise Control (ACC) constraint set by an external TrafficSystem
+# each frame BEFORE update(). When a lead vehicle is detected ahead within
+# range, _acc_target_speed caps the natural target so the car eases off to
+# match the lead's speed and maintain the gap. -1.0 means no constraint.
+var _lead_gap: float = -1.0  # distance to the lead vehicle (px); -1 = none
+var _lead_speed: float = 0.0  # speed of the lead vehicle (px/s)
+var _acc_target_speed: float = -1.0  # computed safe speed; -1 = unconstrained
 
 
 ## Apply a VehicleSpec to this mover. The controller calls this on _ready.
@@ -122,6 +129,32 @@ func _ensure_spec() -> VehicleSpec:
 	if _default_spec == null:
 		_default_spec = VehicleSpec.new()
 	return _default_spec
+
+
+## Set the adaptive-cruise constraint for this frame. Called by a
+## TrafficSystem BEFORE update() so target_speed_at can cap the natural
+## target. Pass gap=-1.0 to clear the constraint (no lead vehicle).
+## The safe speed follows the standard ACC formula:
+##   safe_speed = lead_speed + max(0, (gap - min_gap) / time_gap)
+## When gap < min_gap the car must stop (safe_speed = 0).
+func set_lead_constraint(gap: float, lead_speed: float) -> void:
+	_lead_gap = gap
+	_lead_speed = lead_speed
+	if gap < 0.0:
+		_acc_target_speed = -1.0
+		return
+	var s_spec: VehicleSpec = _ensure_spec()
+	if gap < s_spec.follow_min_gap:
+		_acc_target_speed = 0.0
+		return
+	_acc_target_speed = lead_speed + (gap - s_spec.follow_min_gap) / s_spec.follow_time_gap
+
+
+## Clear the ACC constraint (no lead vehicle ahead). Called by the
+## TrafficSystem when no lead is found this frame.
+func clear_lead_constraint() -> void:
+	_lead_gap = -1.0
+	_acc_target_speed = -1.0
 
 
 func assign_path(new_path: Array[Vector2i], lane_offset: float, turn_radius: float) -> void:
@@ -207,13 +240,20 @@ func is_busy() -> bool:
 ## (S-curve decel to stop at destination, sampled only at the current
 ## position so the car never starts stopping early) with the windowed
 ## apex-based turn slowdown (look-ahead so it brakes BEFORE the turn and
-## sustains the corner speed -- trapezoidal target, no W-shape).
+## sustains the corner speed -- trapezoidal target, no W-shape), then caps
+## by the adaptive-cruise safe speed (set externally each frame). The ACC
+## cap is applied LAST so a lead car always overrides the natural target --
+## the car eases off to maintain the gap even mid-corner or near the
+## destination.
 func target_speed_at(s_pos: float) -> float:
 	var end_factor: float = 1.0
 	if _eff_decel > 0.001:
 		end_factor = _smoothstep((trajectory.total_length - s_pos) / _eff_decel)
 	var turn_factor: float = turn_factor_windowed(s_pos)
-	return max_speed * end_factor * turn_factor
+	var natural: float = max_speed * end_factor * turn_factor
+	if _acc_target_speed >= 0.0:
+		return min(natural, _acc_target_speed)
+	return natural
 
 
 ## Turn slowdown factor at a given arc-length position. 1.0 on straights
