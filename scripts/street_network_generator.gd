@@ -76,6 +76,13 @@ func generate() -> void:
 	# Pass 3: create edges only on block boundaries (between cells of
 	# different blocks). Interior edges of superblocks are skipped.
 	_build_boundary_edges()
+	# Pass 3b: guarantee the perimeter ring is fully connected (a ring road
+	# around the city). Without this, a 2x2 superblock at a corner removes
+	# all internal edges — but at the corner those ARE the perimeter edges,
+	# so the node becomes degree-0/1 and _prune_dead_ends cascades along the
+	# edge, eating the entire top row / left column and leaving an empty
+	# corner. The ring ensures every perimeter node has degree >= 2.
+	_connect_perimeter_ring()
 	# Pass 4: 45-degree diagonal avenues.
 	_add_diagonals()
 	# Finalize: prune dead-ends + isolated pockets, compute boundary.
@@ -177,6 +184,28 @@ func _build_boundary_edges() -> void:
 				_connect(key, Vector2i(c + 1, r))
 			if r + 1 < rows and _block_of(c, r) != _block_of(c, r + 1):
 				_connect(key, Vector2i(c, r + 1))
+
+
+## Connect all adjacent nodes on the grid boundary (the perimeter ring),
+## regardless of superblock assignment. This guarantees a ring road around
+## the city so every perimeter node has degree >= 2. Without it, a 2x2
+## superblock at a corner removes the corner node's only edges, and
+## _prune_dead_ends cascades along the edge leaving an empty corner.
+func _connect_perimeter_ring() -> void:
+	if cols < 2 or rows < 2:
+		return
+	# Top row (row 0): connect (c, 0) -> (c+1, 0).
+	for c in range(cols - 1):
+		_connect(Vector2i(c, 0), Vector2i(c + 1, 0))
+	# Bottom row (last row).
+	for c in range(cols - 1):
+		_connect(Vector2i(c, rows - 1), Vector2i(c + 1, rows - 1))
+	# Left column (col 0): connect (0, r) -> (0, r+1).
+	for r in range(rows - 1):
+		_connect(Vector2i(0, r), Vector2i(0, r + 1))
+	# Right column (last col).
+	for r in range(rows - 1):
+		_connect(Vector2i(cols - 1, r), Vector2i(cols - 1, r + 1))
 
 
 # ------------------------------------------------------ pass 3: diagonal avenues

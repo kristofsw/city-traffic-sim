@@ -177,3 +177,24 @@ func test_reproducibility_same_seed_same_graph() -> void:
 	gen2.generate()
 	assert_eq(gen1.nodes.size(), gen2.nodes.size(), "same seed -> same node count")
 	assert_eq(gen1.edges.size(), gen2.edges.size(), "same seed -> same edge count")
+
+
+func test_perimeter_ring_complete() -> void:
+	# The perimeter ring guarantees every grid corner node survives generation
+	# (a 2x2 superblock at a corner would otherwise leave it degree-0/1 and
+	# the dead-end cascade would eat the entire edge). Check all four corners
+	# survive and every boundary node has degree >= 2.
+	var gen := _build_gen()
+	gen.generate()
+	# All four grid corners should still exist.
+	assert_true(gen.nodes.has(Vector2i(0, 0)), "top-left corner (0,0) should survive")
+	assert_true(gen.nodes.has(Vector2i(gen.cols - 1, 0)), "top-right corner should survive")
+	assert_true(gen.nodes.has(Vector2i(0, gen.rows - 1)), "bottom-left corner should survive")
+	assert_true(
+		gen.nodes.has(Vector2i(gen.cols - 1, gen.rows - 1)), "bottom-right corner should survive"
+	)
+	# Every boundary node should have degree >= 2 (ring guarantees this).
+	for k in gen.boundary_nodes():
+		assert_gte(
+			gen.edges[k].size(), 2, "boundary node %s should have degree >= 2 (perimeter ring)" % k
+		)
