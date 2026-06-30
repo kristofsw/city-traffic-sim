@@ -161,17 +161,17 @@ func test_right_lane_invariant_with_obstacle_holes() -> void:
 
 
 func test_right_lane_invariant_on_street_network() -> void:
-	# Verify the right-lane invariant holds on the organic StreetNetworkGenerator
-	# (varied angles, T-junctions, non-aligned intersections). The trajectory
-	# builder offsets to the right of each edge regardless of angle, so the
-	# car should stay on the right lane through angled turns.
+	# Verify the right-lane invariant holds on the StreetNetworkGenerator
+	# (variable grid + T-junctions + 45° diagonals). The trajectory builder
+	# offsets to the right of each edge regardless of angle, so the car
+	# should stay on the right lane through 45° diagonal turns.
 	var gen := StreetNetworkGenerator.new()
 	gen.screen_size = Vector2(1280, 720)
 	gen.margin_px = 40.0
 	gen.target_block_size = 128.0
-	gen.avenue_count = 5
-	gen.side_street_density = 0.5
-	gen.angle_jitter = 0.35
+	gen.block_jitter = 0.25
+	gen.partial_road_fraction = 0.3
+	gen.diagonal_count = 2
 	gen.snap_tolerance = 24.0
 	gen.rng.seed = 42
 	gen.generate()

@@ -1,10 +1,17 @@
 class_name StreetNetworkGenerator
 extends MapGenerator
-## Organic street network generator: an alternative to the Manhattan grid.
-## Builds avenues (wavering polylines crossing the map) and side streets
-## (branches off avenues at varied angles), producing non-aligned
-## intersections, T-junctions, and varied block lengths -- realistic city
-## variety that the single-global-grid GridGenerator cannot express.
+## Structured variable-grid street network: an alternative to the uniform
+## Manhattan grid. Builds a coherent aligned grid with variable block
+## lengths, partial roads that create T-junctions, and optional 45°
+## diagonal avenues cutting across -- the Barcelona Eixample pattern.
+##
+## Unlike the free-walk organic approach it replaced (which produced a
+## jumbled mess of roads at arbitrary angles), this generator keeps a
+## coherent structure: all rows share column x-positions, all columns
+## share row y-positions, so roads are perfectly straight. Block sizes
+## vary via `block_jitter`; `partial_road_fraction` of roads stop short
+## of the boundary (T-junctions); `diagonal_count` 45° avenues cross
+## the grid and snap to grid intersections where they pass nearby.
 ##
 ## A MapGenerator (Resource) subclass: the seam for expandable map
 ## generation. Drop a saved StreetNetworkGenerator.tres onto RoadGrid's
@@ -12,203 +19,203 @@ extends MapGenerator
 ##
 ## The entire driving pipeline (TrajectoryBuilder bezier arcs, VehicleMover
 ## turn-slowdown, RoadGraph A*, VehicleBody indicators) is angle-agnostic,
-## so roads at any angle work without changes to those systems.
+## so the 45° diagonal turns work without changes to those systems.
+
+# Diagonal node keys use a large offset to avoid colliding with grid keys
+# Vector2i(c, r). Diagonal nodes that snap to a grid node reuse that grid key.
+const _DIAG_KEY_OFFSET: int = 10000
 
 @export var screen_size: Vector2 = Vector2(1280, 720)
 @export var margin_px: float = 40.0
 @export var target_block_size: float = 128.0
 @export var road_width: float = 48.0
 @export var lane_width: float = 24.0
-## Number of primary avenues (long wavering roads crossing the map).
-@export var avenue_count: int = 5
-## Probability per avenue node that a side street branches off it.
-@export var side_street_density: float = 0.5
-## Max angular deviation (radians) per step. ~0.35 rad = ±20°. Avenues
-## waver by ±angle_jitter each step; side streets branch at perpendicular
-## ± angle_jitter (70°-110° from the avenue).
-@export var angle_jitter: float = 0.35
-## Max distance (px) for two nodes to be snapped into one. Merges
-## near-coincident intersections produced by crossing roads.
+## Fraction of block size to vary each step by (0..1). 0 = uniform grid,
+## 0.25 = each step is 75%-125% of the base. Renormalized to fill the area.
+@export var block_jitter: float = 0.25
+## Fraction of roads that are partial (stop short of the boundary, creating
+## T-junctions where they meet full roads). 0 = all roads span the map,
+## 0.3 = ~30% of roads are partial. Boundary nodes on partial roads are
+## removed (they don't reach the edge, so they're not spawn points).
+@export var partial_road_fraction: float = 0.3
+## Number of 45°/135° diagonal avenues crossing the grid (0, 1, or 2).
+## Diagonals snap to nearby grid intersections, creating 5-way junctions
+## where they cross grid roads.
+@export var diagonal_count: int = 2
+## Max distance (px) for a diagonal node to snap to an existing grid node.
 @export var snap_tolerance: float = 24.0
 
+var cols: int = 0
+var rows: int = 0
+var block_w: float = 0.0
+var block_h: float = 0.0
 var rng := RandomNumberGenerator.new()
-# Sequential key counter; keys are Vector2i(id, 0) with no grid meaning.
-var _next_id: int = 0
+# Cumulative x/y offsets from the margin origin (index 0 = 0.0).
+var _col_x: Array[float] = []
+var _row_y: Array[float] = []
 # Cached boundary (nodes near the screen edge) for spawn selection.
 var _boundary: Array[Vector2i] = []
 
 
 func generate() -> void:
+	var inner_w: float = screen_size.x - 2.0 * margin_px
+	var inner_h: float = screen_size.y - 2.0 * margin_px
+	cols = max(2, int(floor(inner_w / target_block_size)) + 1)
+	rows = max(2, int(floor(inner_h / target_block_size)) + 1)
+	block_w = inner_w / float(cols - 1)
+	block_h = inner_h / float(rows - 1)
+	_build_offsets(inner_w, inner_h)
 	nodes.clear()
 	edges.clear()
-	_next_id = 0
 	_boundary = []
-	# Do NOT randomize() here: the caller may have set rng.seed for
-	# reproducibility (tests, .tres presets). RandomNumberGenerator is
-	# already randomized on construction; only re-randomize if desired.
-	# Pass 1: avenues -- long wavering polylines crossing the map.
-	_generate_avenues()
-	# Pass 2: side streets -- branches off avenues at varied angles.
-	_generate_side_streets()
-	# Pass 3: snap near-coincident nodes, prune unreachable pockets.
-	_snap_nearby_nodes()
-	_prune_unreachable()
+	# Pass 1: aligned variable grid.
+	_build_grid()
+	# Pass 2: partial roads (T-junctions).
+	_make_partial_roads()
+	# Pass 3: 45° diagonal avenues.
+	_add_diagonals()
+	# Finalize: prune dead-ends + isolated pockets, compute boundary.
 	_prune_dead_ends()
+	_prune_unreachable()
 	_compute_boundary()
 
 
-# ------------------------------------------------------------------ avenues
+# ----------------------------------------------------------------- pass 1: grid
 
 
-## Build `avenue_count` polylines that waver across the map. Half start on
-## the left edge heading right; half start on the top edge heading down.
-## Each step advances ~target_block_size and rotates the heading by
-## ±angle_jitter. Nodes are added along the polyline; consecutive nodes
-## are connected.
-func _generate_avenues() -> void:
+## Build the full aligned grid: all cols x rows nodes at variable offsets,
+## connected with 4-neighbourhood edges. Roads are perfectly straight
+## because all rows share _col_x and all columns share _row_y.
+func _build_grid() -> void:
+	for c in range(cols):
+		for r in range(rows):
+			var key := Vector2i(c, r)
+			nodes[key] = world_pos(c, r)
+			edges[key] = []
+	for c in range(cols):
+		for r in range(rows):
+			var key := Vector2i(c, r)
+			if c + 1 < cols:
+				_connect(key, Vector2i(c + 1, r))
+			if r + 1 < rows:
+				_connect(key, Vector2i(c, r + 1))
+
+
+func world_pos(c: int, r: int) -> Vector2:
+	return Vector2(margin_px + _col_x[c], margin_px + _row_y[r])
+
+
+# ------------------------------------------------------- pass 2: partial roads
+
+
+## Make `partial_road_fraction` of vertical and horizontal roads partial:
+## they span only a subset of rows/columns, stopping at interior
+## intersections (T-junctions) instead of reaching the boundary. Nodes on
+## partial roads outside the span are removed; boundary nodes on partial
+## roads are removed (they're not spawn points).
+func _make_partial_roads() -> void:
+	# Vertical roads (columns): pick a contiguous row span [r_start, r_end].
+	var partial_cols: int = int(float(cols) * partial_road_fraction * 0.5)
+	for _i in range(partial_cols):
+		var c: int = rng.randi_range(1, cols - 2)
+		if not nodes.has(Vector2i(c, 0)):
+			continue  # already partial
+		var span_start: int = rng.randi_range(1, max(1, rows - 3))
+		var span_end: int = rng.randi_range(span_start + 1, rows - 2)
+		_remove_column_outside_span(c, span_start, span_end)
+	# Horizontal roads (rows): pick a contiguous column span [c_start, c_end].
+	var partial_rows: int = int(float(rows) * partial_road_fraction * 0.5)
+	for _i in range(partial_rows):
+		var r: int = rng.randi_range(1, rows - 2)
+		if not nodes.has(Vector2i(0, r)):
+			continue  # already partial
+		var span_start: int = rng.randi_range(1, max(1, cols - 3))
+		var span_end: int = rng.randi_range(span_start + 1, cols - 2)
+		_remove_row_outside_span(r, span_start, span_end)
+
+
+## Remove all nodes on column `c` outside [r_start, r_end], cleaning edges.
+func _remove_column_outside_span(c: int, r_start: int, r_end: int) -> void:
+	for r in range(rows):
+		if r < r_start or r > r_end:
+			_remove_node(Vector2i(c, r))
+
+
+## Remove all nodes on row `r` outside [c_start, c_end], cleaning edges.
+func _remove_row_outside_span(r: int, c_start: int, c_end: int) -> void:
+	for c in range(cols):
+		if c < c_start or c > c_end:
+			_remove_node(Vector2i(c, r))
+
+
+# ------------------------------------------------------ pass 3: diagonal avenues
+
+
+## Add `diagonal_count` 45°/135° diagonal avenues crossing the map. Each
+## diagonal steps at ~target_block_size in a fixed diagonal direction,
+## snapping to existing grid nodes within snap_tolerance. Consecutive
+## diagonal nodes are connected, merging with the grid where they cross.
+func _add_diagonals() -> void:
+	if diagonal_count <= 0:
+		return
 	var inner: Rect2 = _inner_rect()
-	for i in range(avenue_count):
-		var horizontal: bool = i % 2 == 0
-		var start: Vector2
-		var heading: float
-		if horizontal:
-			start = Vector2(inner.position.x, inner.position.y + rng.randf() * inner.size.y)
-			heading = 0.0  # east
-		else:
-			start = Vector2(inner.position.x + rng.randf() * inner.size.x, inner.position.y)
-			heading = PI / 2.0  # south
-		_walk_polyline(start, heading, inner)
+	# Diagonal 1: 45° (southeast) from left edge near the top.
+	if diagonal_count >= 1:
+		var start1: Vector2 = Vector2(
+			inner.position.x, inner.position.y + inner.size.y * rng.randf_range(0.1, 0.4)
+		)
+		_walk_diagonal(start1, PI / 4.0, inner)  # 45° southeast
+	# Diagonal 2: 135° (southwest) from right edge near the top.
+	if diagonal_count >= 2:
+		var start2: Vector2 = Vector2(
+			inner.position.x + inner.size.x,
+			inner.position.y + inner.size.y * rng.randf_range(0.1, 0.4)
+		)
+		_walk_diagonal(start2, PI * 3.0 / 4.0, inner)  # 135° southwest
 
 
-## Walk a wavering polyline from `start` in `heading` until it exits the
-## inner rect. At each step: add a node (or snap to an existing nearby
-## node), connect to the previous node, jitter the heading by ±angle_jitter.
-func _walk_polyline(start: Vector2, heading: float, bounds: Rect2) -> void:
-	var step: float = target_block_size
-	var prev_key: Vector2i = _add_or_snap_node(start)
+## Walk a diagonal avenue from `start` at fixed `heading` (45° or 135°),
+## stepping ~target_block_size each node. At each position, snap to an
+## existing grid node within snap_tolerance if one exists (creating 5-way
+## junctions); otherwise add a new diagonal node. Connect consecutive nodes.
+func _walk_diagonal(start: Vector2, heading: float, bounds: Rect2) -> void:
+	var step: float = target_block_size * sqrt(2.0) * 0.5  # ~one grid cell diagonally
 	var pos: Vector2 = start
+	var prev_key: Vector2i = _add_or_snap_diagonal_node(pos)
 	while bounds.has_point(pos):
-		heading += (rng.randf() * 2.0 - 1.0) * angle_jitter
-		pos += Vector2.from_angle(heading) * step
-		pos = _clamp_to_bounds(pos, bounds)
-		var key: Vector2i = _add_or_snap_node(pos)
-		_connect(prev_key, key)
-		# If we snapped onto an existing node, the polyline has merged with
-		# another road -- stop here (the avenue has reached existing fabric).
-		if nodes[key] == pos or _degree(key) > 1:
-			# Snapped to an existing node (degree already > 1); keep walking
-			# so the avenue continues through the intersection.
-			pass
-		prev_key = key
-
-
-# -------------------------------------------------------------- side streets
-
-
-## Branch side streets off avenue nodes. For each avenue node, with
-## probability side_street_density, start a side street heading
-## perpendicular ± angle_jitter and walk it until it snaps to an existing
-## road node (no dead-ends: if it wanders too far without snapping, steer
-## toward the nearest existing node).
-func _generate_side_streets() -> void:
-	var inner: Rect2 = _inner_rect()
-	# Snapshot avenue node keys so we don't iterate nodes we add mid-loop.
-	var avenue_keys: Array[Vector2i] = []
-	for k in nodes.keys():
-		avenue_keys.append(k)
-	for k in avenue_keys:
-		if rng.randf() > side_street_density:
-			continue
-		var pos: Vector2 = nodes[k]
-		# Perpendicular to the first edge off this node (if any), ± angle_jitter.
-		var base_heading: float = 0.0
-		if edges[k].size() > 0:
-			var nb: Vector2 = nodes[edges[k][0]]
-			base_heading = (nb - pos).angle()
-		var branch_heading: float = base_heading + PI / 2.0
-		branch_heading += (rng.randf() * 2.0 - 1.0) * angle_jitter
-		_walk_side_street(pos, branch_heading, inner)
-
-
-## Walk a side street from `start` in `heading` until it snaps to an
-## existing road node. Each step: advance ~target_block_size, jitter
-## heading, add/snap a node, connect. If no snap after several steps, steer
-## toward the nearest existing node to guarantee no dead-ends.
-func _walk_side_street(start: Vector2, heading: float, bounds: Rect2) -> void:
-	var step: float = target_block_size
-	var max_steps_no_snap: int = 12
-	var prev_key: Vector2i = _add_or_snap_node(start)
-	var pos: Vector2 = start
-	var steps_no_snap: int = 0
-	for _i in range(60):
-		heading += (rng.randf() * 2.0 - 1.0) * angle_jitter
-		# If we haven't snapped in a while, steer toward the nearest
-		# existing node to avoid dead-ends.
-		if steps_no_snap >= max_steps_no_snap:
-			var nearest := _nearest_other_node(pos, prev_key)
-			if nearest != Vector2.ZERO:
-				heading = (nearest - pos).angle()
 		pos += Vector2.from_angle(heading) * step
 		if not bounds.has_point(pos):
-			pos = _clamp_to_bounds(pos, bounds)
-		var key: Vector2i = _add_or_snap_node(pos)
+			break
+		var key: Vector2i = _add_or_snap_diagonal_node(pos)
 		if key != prev_key:
 			_connect(prev_key, key)
-		# If we snapped to an existing node, the street has joined the
-		# network -- stop (no dead-end).
-		if _is_existing_node(key) and _degree(key) > 1:
-			return
 		prev_key = key
-		steps_no_snap += 1
 
 
-# ----------------------------------------------------------- snap + prune
-
-
-## Merge nodes within snap_tolerance of each other into the lower-id node.
-## Cleans edges from both directions and re-points references.
-func _snap_nearby_nodes() -> void:
-	var keys: Array[Vector2i] = []
+## Add a diagonal node at `pos`, OR return the key of an existing grid node
+## within snap_tolerance (so the diagonal merges with the grid at crossings).
+func _add_or_snap_diagonal_node(pos: Vector2) -> Vector2i:
 	for k in nodes.keys():
-		keys.append(k)
-	for i in range(keys.size()):
-		var a: Vector2i = keys[i]
-		if not nodes.has(a):
-			continue
-		for j in range(i + 1, keys.size()):
-			var b: Vector2i = keys[j]
-			if not nodes.has(b):
-				continue
-			if nodes[a].distance_to(nodes[b]) <= snap_tolerance:
-				_merge_nodes(a, b)
+		if nodes[k].distance_to(pos) <= snap_tolerance:
+			return k
+	var key := Vector2i(_DIAG_KEY_OFFSET, _DIAG_KEY_OFFSET)
+	# Find a unique diagonal key (offset both axes so it never collides
+	# with grid keys Vector2i(c, r) where c,r < cols,rows).
+	while nodes.has(key):
+		key.x += 1
+	nodes[key] = pos
+	edges[key] = []
+	return key
 
 
-## Merge node b into node a (keep a). Re-point all b's edges to a.
-func _merge_nodes(a: Vector2i, b: Vector2i) -> void:
-	if a == b:
-		return
-	for n in edges[b]:
-		if n == a:
-			continue
-		# Re-point neighbor n from b to a (avoid duplicates).
-		if not edges[a].has(n):
-			edges[a].append(n)
-		if edges.has(n):
-			var idx: int = edges[n].find(b)
-			if idx >= 0:
-				edges[n][idx] = a
-	# Remove the b-a self-edge that may have been added.
-	edges[a].erase(b)
-	edges.erase(b)
-	nodes.erase(b)
+# ----------------------------------------------------------- finalize: prune
 
 
-## Remove any node not reachable from the boundary. Guarantees the
-## remaining graph is fully connected (A* always finds a path).
+## Remove any node not reachable from the first surviving node. Guarantees
+## the remaining graph is fully connected (A* always finds a path).
 func _prune_unreachable() -> void:
 	if nodes.is_empty():
 		return
-	# BFS from an arbitrary node; any node not reached is isolated.
 	var start: Vector2i = nodes.keys()[0]
 	var visited: Dictionary = {start: true}
 	var queue: Array[Vector2i] = [start]
@@ -227,9 +234,7 @@ func _prune_unreachable() -> void:
 
 
 ## Iteratively remove degree-1 nodes (dead-ends). Removing a dead-end may
-## turn its neighbor into a new dead-end, so loop until none remain. This
-## guarantees every node has degree >= 2, so every road is part of a loop
-## and A* always has an alternate route.
+## turn its neighbor into a new dead-end, so loop until none remain.
 func _prune_dead_ends() -> void:
 	var changed: bool = true
 	while changed:
@@ -268,51 +273,39 @@ func _inner_rect() -> Rect2:
 	)
 
 
-func _clamp_to_bounds(pos: Vector2, bounds: Rect2) -> Vector2:
-	return Vector2(
-		clamp(pos.x, bounds.position.x, bounds.position.x + bounds.size.x),
-		clamp(pos.y, bounds.position.y, bounds.position.y + bounds.size.y)
-	)
+## Build cumulative x/y offset arrays. Index 0 is always 0.0 (the margin is
+## added in world_pos). Each subsequent step is base*(1 ± jitter*rng) and the
+## array is renormalized so the last entry fills inner_w/inner_h exactly.
+## Same renormalization math as GridGenerator._build_axis.
+func _build_offsets(inner_w: float, inner_h: float) -> void:
+	_col_x = _build_axis(cols, block_w, inner_w)
+	_row_y = _build_axis(rows, block_h, inner_h)
 
 
-## Add a node at `pos` with a fresh sequential key, OR return the key of
-## an existing node within snap_tolerance (so crossing roads merge).
-func _add_or_snap_node(pos: Vector2) -> Vector2i:
-	# Check for an existing node within snap_tolerance.
-	for k in nodes.keys():
-		if nodes[k].distance_to(pos) <= snap_tolerance:
-			return k
-	var key := Vector2i(_next_id, 0)
-	_next_id += 1
-	nodes[key] = pos
-	edges[key] = []
-	return key
-
-
-## True if the node existed before this side-street walk began (degree > 0
-## from prior connections). Used to detect snapping onto existing fabric.
-func _is_existing_node(key: Vector2i) -> bool:
-	return edges.has(key) and edges[key].size() > 0
-
-
-func _degree(key: Vector2i) -> int:
-	if not edges.has(key):
-		return 0
-	return edges[key].size()
-
-
-## Nearest node world position to `pos` excluding the node `exclude_key`.
-func _nearest_other_node(pos: Vector2, exclude_key: Vector2i) -> Vector2:
-	var best: Vector2 = Vector2.ZERO
-	var best_d: float = INF
-	for k in nodes.keys():
-		if k == exclude_key:
-			continue
-		var d: float = nodes[k].distance_to(pos)
-		if d < best_d:
-			best_d = d
-			best = nodes[k]
-	return best
+func _build_axis(count: int, base: float, total: float) -> Array[float]:
+	var out: Array[float] = []
+	out.resize(count)
+	if count == 0:
+		return out
+	out[0] = 0.0
+	if count == 1:
+		return out
+	var raw_sum: float = 0.0
+	var steps: Array[float] = []
+	steps.resize(count - 1)
+	for i in range(count - 1):
+		var s: float = base
+		if block_jitter > 0.0:
+			var f: float = 1.0 + (rng.randf() * 2.0 - 1.0) * block_jitter
+			s = base * f
+		steps[i] = s
+		raw_sum += s
+	var scale: float = total / raw_sum if raw_sum > 0.0 else 0.0
+	var cum: float = 0.0
+	for i in range(count - 1):
+		cum += steps[i] * scale
+		out[i + 1] = cum
+	return out
 
 
 func _connect(a: Vector2i, b: Vector2i) -> void:
@@ -345,11 +338,9 @@ func boundary_nodes() -> Array[Vector2i]:
 	return _boundary
 
 
-## World Euclidean distance override (matches the base MapGenerator
-## signature; StreetNetworkGenerator uses sequential-id keys so
-## Manhattan-on-keys would be meaningless -- but the base now uses world
-## distance too, so this override is technically redundant. Kept explicit
-## for clarity and as a documented contract.
+## World Euclidean distance (inherits the base MapGenerator.far_from behavior
+## but kept explicit as a documented contract since this generator uses a
+## mix of grid keys and diagonal keys).
 func far_from(key: Vector2i, min_distance: float) -> Array:
 	var out: Array = []
 	if not nodes.has(key):

@@ -24,15 +24,15 @@ const ROUTE_RING_INNER := Color(0.168, 0.168, 0.188, 1)  # asphalt core for ring
 @export var lane_offset: float = 12.0  # right-hand lane offset, matches vehicle
 @export var turn_radius_for_route: float = 22.0  # matches vehicle turn_radius
 ## Which built-in generator to use when no `map_generator` preset is assigned.
-## "grid" = Manhattan grid (GridGenerator); "street_network" = organic
-## street network (StreetNetworkGenerator). The `map_generator` export
-## always takes priority if set.
+## "grid" = Manhattan grid (GridGenerator); "street_network" = variable grid
+## with T-junctions and 45° diagonals (StreetNetworkGenerator). The
+## `map_generator` export always takes priority if set.
 @export var generator_type: StringName = &"grid"
 ## StreetNetworkGenerator params (used only when generator_type == "street_network"
 ## and no map_generator preset is assigned).
-@export var avenue_count: int = 5
-@export var side_street_density: float = 0.5
-@export var angle_jitter: float = 0.35
+@export var block_jitter: float = 0.25
+@export var partial_road_fraction: float = 0.3
+@export var diagonal_count: int = 2
 @export var snap_tolerance: float = 24.0
 ## Optional map-generator preset (.tres). When assigned, RoadGrid uses a
 ## duplicate of it (so a shared preset isn't mutated) instead of building a
@@ -66,9 +66,9 @@ func _regenerate() -> void:
 		sn.target_block_size = target_block_size
 		sn.road_width = road_width
 		sn.lane_width = lane_width
-		sn.avenue_count = avenue_count
-		sn.side_street_density = side_street_density
-		sn.angle_jitter = angle_jitter
+		sn.block_jitter = block_jitter
+		sn.partial_road_fraction = partial_road_fraction
+		sn.diagonal_count = diagonal_count
 		sn.snap_tolerance = snap_tolerance
 		generator = sn
 	else:

@@ -1,5 +1,6 @@
 extends GutTest
-## Unit tests for StreetNetworkGenerator (organic street network).
+## Unit tests for StreetNetworkGenerator (variable grid + T-junctions +
+## 45° diagonals).
 
 
 func _build_gen() -> StreetNetworkGenerator:
@@ -7,9 +8,9 @@ func _build_gen() -> StreetNetworkGenerator:
 	gen.screen_size = Vector2(1280, 720)
 	gen.margin_px = 40.0
 	gen.target_block_size = 128.0
-	gen.avenue_count = 5
-	gen.side_street_density = 0.5
-	gen.angle_jitter = 0.35
+	gen.block_jitter = 0.25
+	gen.partial_road_fraction = 0.3
+	gen.diagonal_count = 2
 	gen.snap_tolerance = 24.0
 	gen.rng.seed = 42
 	return gen
@@ -25,7 +26,6 @@ func test_generate_populates_nodes_and_edges() -> void:
 func test_graph_is_connected() -> void:
 	var gen := _build_gen()
 	gen.generate()
-	# BFS from any node; all nodes must be reachable.
 	var keys: Array = gen.nodes.keys()
 	assert_gt(keys.size(), 0, "should have nodes")
 	var start: Vector2i = keys[0]
@@ -60,8 +60,6 @@ func test_boundary_non_empty_and_near_edge() -> void:
 func test_far_from_uses_world_distance() -> void:
 	var gen := _build_gen()
 	gen.generate()
-	# Pick a node; far_from should return only nodes >= min_distance in
-	# world Euclidean distance (not Manhattan-on-keys).
 	var keys: Array = gen.nodes.keys()
 	var key: Vector2i = keys[0]
 	var ref_pos: Vector2 = gen.nodes[key]
@@ -85,23 +83,63 @@ func test_no_dangling_edges() -> void:
 func test_no_dead_ends_min_degree_2() -> void:
 	var gen := _build_gen()
 	gen.generate()
-	# Every node should have degree >= 2 (no dead-ends: side streets must
-	# snap to another road before terminating).
 	for key in gen.edges:
 		assert_gte(gen.edges[key].size(), 2, "node %s should have degree >= 2 (no dead-ends)" % key)
 
 
-func test_has_junctions_degree_3_or_more() -> void:
+func test_has_t_junctions_degree_3() -> void:
 	var gen := _build_gen()
 	gen.generate()
-	# The network should have at least some T-junctions (degree 3) or
-	# 4-way intersections (degree 4) -- this is the whole point of the
-	# organic network vs the uniform grid.
-	var junctions: int = 0
+	var t_junctions: int = 0
 	for key in gen.edges:
-		if gen.edges[key].size() >= 3:
-			junctions += 1
-	assert_gt(junctions, 0, "should have at least one junction (degree >= 3)")
+		if gen.edges[key].size() == 3:
+			t_junctions += 1
+	assert_gt(t_junctions, 0, "should have at least one T-junction (degree 3) from partial roads")
+
+
+func test_has_diagonal_edges() -> void:
+	var gen := _build_gen()
+	gen.generate()
+	# At least one edge should be non-axis-aligned (a 45° diagonal segment).
+	var has_diagonal: bool = false
+	for key in gen.edges:
+		var from: Vector2 = gen.nodes[key]
+		for n in gen.edges[key]:
+			if key < n:
+				var to: Vector2 = gen.nodes[n]
+				var dx: float = abs(to.x - from.x)
+				var dy: float = abs(to.y - from.y)
+				# Axis-aligned edges have one dimension ~0; diagonals have both.
+				if dx > 1.0 and dy > 1.0:
+					has_diagonal = true
+	assert_true(has_diagonal, "should have at least one non-axis-aligned (diagonal) edge")
+
+
+func test_aligned_grid_shares_positions() -> void:
+	# Grid nodes (key.x < _DIAG_KEY_OFFSET) should share column x-positions
+	# and row y-positions: all nodes with the same c have the same x.
+	var gen := _build_gen()
+	gen.diagonal_count = 0  # isolate grid for this check
+	gen.generate()
+	var col_x: Dictionary = {}  # c -> x
+	var row_y: Dictionary = {}  # r -> y
+	for k in gen.nodes.keys():
+		var key: Vector2i = k
+		if key.x >= gen._DIAG_KEY_OFFSET:
+			continue  # skip diagonal nodes
+		var p: Vector2 = gen.nodes[k]
+		if col_x.has(key.x):
+			assert_almost_eq(
+				p.x, col_x[key.x], 0.01, "column %d x should be shared across rows" % key.x
+			)
+		else:
+			col_x[key.x] = p.x
+		if row_y.has(key.y):
+			assert_almost_eq(
+				p.y, row_y[key.y], 0.01, "row %d y should be shared across columns" % key.y
+			)
+		else:
+			row_y[key.y] = p.y
 
 
 func test_reproducibility_same_seed_same_graph() -> void:
