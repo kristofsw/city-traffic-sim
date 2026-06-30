@@ -4,7 +4,7 @@ A minimalist, top-down city traffic simulation built in Godot 4.7, designed as a
 
 ## Features
 
-- **Procedural road network** — two map generators selectable via `generator_type`: a Manhattan-style `grid` (with optional `block_jitter` for varied block spacing and `obstacle_count`/`obstacle_radius` for park-filled holes that force A\* detours), or a `street_network` built on a coherent aligned grid with variable block lengths, partial roads that create T-junctions, and 45°/135° diagonal avenues snapping to grid intersections — the Barcelona Eixample pattern. New generators plug in via the `MapGenerator` Resource seam.
+- **Procedural road network** — two map generators selectable via `generator_type`: a Manhattan-style `grid` (with optional `block_jitter` for varied block spacing and `obstacle_count`/`obstacle_radius` for park-filled holes that force A\* detours), or a `street_network` built on a coherent aligned grid with **superblock tiling** — the cell grid is tiled with 1×1, 2×1, 1×2, and 2×2 blocks at equal weights, and roads are created only on block boundaries, so larger blocks produce longer uninterrupted road stretches and natural T-junctions. Optional 45°/135° diagonal avenues snap to grid intersections. New generators plug in via the `MapGenerator` Resource seam.
 - **A\* pathfinding** — continuous A→B routing over the road graph with Manhattan-distance heuristic; vehicles repath to a **fresh boundary spawn point** and a new far goal on every arrival, so each trip is independent of the previous.
 - **Arc-length bezier turns** — turns through intersections are quadratic bezier arcs, G1-continuous with the incoming/outgoing straights, so position and heading stay perfectly coupled.
 - **Right-hand lane following** — all trajectories are offset to the right-hand lane; the car never enters oncoming traffic.
@@ -71,7 +71,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for layer-by-layer contracts, algorithm d
 |------|-------|---------|------|
 | `scripts/map_generator.gd` | `MapGenerator` | `Resource` | Contract for procedural map generation (nodes + edges); subclasses saved as `.tres` presets |
 | `scripts/grid_generator.gd` | `GridGenerator` | `MapGenerator` | Screen-filling Manhattan grid (nodes + 4-neighbourhood edges, optional obstacle holes) |
-| `scripts/street_network_generator.gd` | `StreetNetworkGenerator` | `MapGenerator` | Variable grid + T-junctions + 45° diagonals (Barcelona Eixample pattern) |
+| `scripts/street_network_generator.gd` | `StreetNetworkGenerator` | `MapGenerator` | Variable grid + superblock tiling + 45° diagonals |
 | `scripts/road_graph.gd` | `RoadGraph` | `RefCounted` | Holds the graph and runs A\* pathfinding |
 | `scripts/trajectory_builder.gd` | `TrajectoryBuilder` | `RefCounted` | Converts a grid path into right-lane-offset `LineSeg`/`BezierSeg` (shared by driving + rendering) |
 | `scripts/trajectory.gd` | `Trajectory` | `RefCounted` | Arc-length-parametrized wrapper over segments; single source of truth for segment lookup (DRY) |
@@ -105,7 +105,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for layer-by-layer contracts, algorithm d
 | `block_jitter` | `0` | Fraction of block size to vary each step by (0 = uniform grid, 0.25 = ±25% per step; renormalized to fill the area). Used by both generators (GridGenerator default 0, StreetNetworkGenerator default 0.25). |
 | `obstacle_count` | `3` | Grid only: number of obstacle hole clusters carved out of the grid interior (0 = no holes; holes force A* to detour) |
 | `obstacle_radius` | `2` | Grid only: radius of each hole cluster in graph hops (boundary nodes are protected and never removed) |
-| `partial_road_fraction` | `0.3` | Street network only: fraction of roads that stop short of the boundary, creating T-junctions where they meet full roads |
+| `partial_road_fraction` | *(removed)* | Replaced by superblock tiling: the generator tiles the cell grid with 1×1, 2×1, 1×2, and 2×2 blocks at equal weights, creating roads only on block boundaries. Interior edges of superblocks are skipped, producing varied block sizes, T-junctions, and longer uninterrupted road stretches — no configuration needed. |
 | `diagonal_count` | `2` | Street network only: number of 45°/135° diagonal avenues crossing the grid (0, 1, or 2; diagonals snap to grid intersections) |
 | `snap_tolerance` | `24` | Street network only: max distance (px) for a diagonal node to snap to an existing grid node (merges crossing roads into 5-way junctions) |
 
@@ -198,7 +198,7 @@ city-traffic-sim/
 ├── scripts/
 │   ├── map_generator.gd       # MapGenerator contract (Resource base for .tres presets)
 │   ├── grid_generator.gd      # Screen-filling Manhattan grid (extends MapGenerator)
-│   ├── street_network_generator.gd  # Variable grid + T-junctions + 45° diagonals (extends MapGenerator)
+│   ├── street_network_generator.gd  # Variable grid + superblock tiling + 45° diagonals (extends MapGenerator)
 │   ├── road_graph.gd          # Graph + A* pathfinding
 │   ├── trajectory_builder.gd  # Right-lane offset trajectory (DRY)
 │   ├── trajectory.gd          # Arc-length-parametrized trajectory wrapper (DRY)

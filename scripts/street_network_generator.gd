@@ -1,17 +1,20 @@
 class_name StreetNetworkGenerator
 extends MapGenerator
 ## Structured variable-grid street network: an alternative to the uniform
-## Manhattan grid. Builds a coherent aligned grid with variable block
-## lengths, partial roads that create T-junctions, and optional 45°
-## diagonal avenues cutting across -- the Barcelona Eixample pattern.
+## Manhattan grid. Tiles the cell grid with superblocks of four sizes
+## (1x1, 2x1, 1x2, 2x2) at equal weights, creating roads only on block
+## boundaries. Interior edges of superblocks are skipped, so larger blocks
+## produce longer uninterrupted road stretches and natural T-junctions
+## where block boundaries meet. Optional 45-degree diagonal avenues cross
+## the grid and snap to grid intersections where they pass nearby.
 ##
 ## Unlike the free-walk organic approach it replaced (which produced a
 ## jumbled mess of roads at arbitrary angles), this generator keeps a
 ## coherent structure: all rows share column x-positions, all columns
 ## share row y-positions, so roads are perfectly straight. Block sizes
-## vary via `block_jitter`; `partial_road_fraction` of roads stop short
-## of the boundary (T-junctions); `diagonal_count` 45° avenues cross
-## the grid and snap to grid intersections where they pass nearby.
+## vary via `block_jitter`; superblock tiling creates structural variety
+## (missing internal roads, T-junctions, varied block lengths); and
+## `diagonal_count` 45-degree avenues cross the grid.
 ##
 ## A MapGenerator (Resource) subclass: the seam for expandable map
 ## generation. Drop a saved StreetNetworkGenerator.tres onto RoadGrid's
@@ -19,7 +22,7 @@ extends MapGenerator
 ##
 ## The entire driving pipeline (TrajectoryBuilder bezier arcs, VehicleMover
 ## turn-slowdown, RoadGraph A*, VehicleBody indicators) is angle-agnostic,
-## so the 45° diagonal turns work without changes to those systems.
+## so the 45-degree diagonal turns work without changes to those systems.
 
 # Diagonal node keys use a large offset to avoid colliding with grid keys
 # Vector2i(c, r). Diagonal nodes that snap to a grid node reuse that grid key.
@@ -33,11 +36,6 @@ const _DIAG_KEY_OFFSET: int = 10000
 ## Fraction of block size to vary each step by (0..1). 0 = uniform grid,
 ## 0.25 = each step is 75%-125% of the base. Renormalized to fill the area.
 @export var block_jitter: float = 0.25
-## Fraction of roads that are partial (stop short of the boundary, creating
-## T-junctions where they meet full roads). 0 = all roads span the map,
-## 0.3 = ~30% of roads are partial. Boundary nodes on partial roads are
-## removed (they don't reach the edge, so they're not spawn points).
-@export var partial_road_fraction: float = 0.3
 ## Number of 45°/135° diagonal avenues crossing the grid (0, 1, or 2).
 ## Diagonals snap to nearby grid intersections, creating 5-way junctions
 ## where they cross grid roads.
@@ -53,6 +51,9 @@ var rng := RandomNumberGenerator.new()
 # Cumulative x/y offsets from the margin origin (index 0 = 0.0).
 var _col_x: Array[float] = []
 var _row_y: Array[float] = []
+# Block id assigned to each cell during superblock tiling. -1 = unassigned.
+# Roads (edges) are only created between cells of different blocks.
+var _block: Array[int] = []
 # Cached boundary (nodes near the screen edge) for spawn selection.
 var _boundary: Array[Vector2i] = []
 
@@ -68,11 +69,14 @@ func generate() -> void:
 	nodes.clear()
 	edges.clear()
 	_boundary = []
-	# Pass 1: aligned variable grid.
+	# Pass 1: aligned variable grid (nodes only, no edges yet).
 	_build_grid()
-	# Pass 2: partial roads (T-junctions).
-	_make_partial_roads()
-	# Pass 3: 45° diagonal avenues.
+	# Pass 2: tile the cell grid with superblocks (1x1, 2x1, 1x2, 2x2).
+	_tile_superblocks()
+	# Pass 3: create edges only on block boundaries (between cells of
+	# different blocks). Interior edges of superblocks are skipped.
+	_build_boundary_edges()
+	# Pass 4: 45-degree diagonal avenues.
 	_add_diagonals()
 	# Finalize: prune dead-ends + isolated pockets, compute boundary.
 	_prune_dead_ends()
@@ -83,69 +87,96 @@ func generate() -> void:
 # ----------------------------------------------------------------- pass 1: grid
 
 
-## Build the full aligned grid: all cols x rows nodes at variable offsets,
-## connected with 4-neighbourhood edges. Roads are perfectly straight
-## because all rows share _col_x and all columns share _row_y.
+## Build the full aligned grid: all cols x rows nodes at variable offsets.
+## Edges are NOT created here; _build_boundary_edges does that after
+## superblock tiling decides which cell adjacencies are block boundaries.
 func _build_grid() -> void:
 	for c in range(cols):
 		for r in range(rows):
 			var key := Vector2i(c, r)
 			nodes[key] = world_pos(c, r)
 			edges[key] = []
-	for c in range(cols):
-		for r in range(rows):
-			var key := Vector2i(c, r)
-			if c + 1 < cols:
-				_connect(key, Vector2i(c + 1, r))
-			if r + 1 < rows:
-				_connect(key, Vector2i(c, r + 1))
 
 
 func world_pos(c: int, r: int) -> Vector2:
 	return Vector2(margin_px + _col_x[c], margin_px + _row_y[r])
 
 
-# ------------------------------------------------------- pass 2: partial roads
+# ------------------------------------------------------ pass 2: superblock tiling
 
 
-## Make `partial_road_fraction` of vertical and horizontal roads partial:
-## they span only a subset of rows/columns, stopping at interior
-## intersections (T-junctions) instead of reaching the boundary. Nodes on
-## partial roads outside the span are removed; boundary nodes on partial
-## roads are removed (they're not spawn points).
-func _make_partial_roads() -> void:
-	# Vertical roads (columns): pick a contiguous row span [r_start, r_end].
-	var partial_cols: int = int(float(cols) * partial_road_fraction * 0.5)
-	for _i in range(partial_cols):
-		var c: int = rng.randi_range(1, cols - 2)
-		if not nodes.has(Vector2i(c, 0)):
-			continue  # already partial
-		var span_start: int = rng.randi_range(1, max(1, rows - 3))
-		var span_end: int = rng.randi_range(span_start + 1, rows - 2)
-		_remove_column_outside_span(c, span_start, span_end)
-	# Horizontal roads (rows): pick a contiguous column span [c_start, c_end].
-	var partial_rows: int = int(float(rows) * partial_road_fraction * 0.5)
-	for _i in range(partial_rows):
-		var r: int = rng.randi_range(1, rows - 2)
-		if not nodes.has(Vector2i(0, r)):
-			continue  # already partial
-		var span_start: int = rng.randi_range(1, max(1, cols - 3))
-		var span_end: int = rng.randi_range(span_start + 1, cols - 2)
-		_remove_row_outside_span(r, span_start, span_end)
-
-
-## Remove all nodes on column `c` outside [r_start, r_end], cleaning edges.
-func _remove_column_outside_span(c: int, r_start: int, r_end: int) -> void:
+## Tile the cell grid greedily left-to-right, top-to-bottom with blocks of
+## four sizes (1x1, 2x1, 1x2, 2x2) at equal weights. Each cell is assigned
+## a block id; roads are later created only between cells of different
+## blocks, so interior edges of superblocks are skipped (a 2x2 block has
+## no internal roads). Falls back to 1x1 when a larger block would not fit
+## (right or bottom edge of the grid).
+func _tile_superblocks() -> void:
+	_block.resize(cols * rows)
+	_block.fill(-1)
+	var next_id: int = 0
 	for r in range(rows):
-		if r < r_start or r > r_end:
-			_remove_node(Vector2i(c, r))
+		for c in range(cols):
+			if _block_of(c, r) != -1:
+				continue  # already covered by a previous larger block
+			# Try block sizes in random order, but constrained by fit.
+			# Sizes are (w, h) in cells.
+			var sizes: Array[Vector2i] = [
+				Vector2i(2, 2), Vector2i(2, 1), Vector2i(1, 2), Vector2i(1, 1)
+			]
+			# Shuffle so equal weights are honored (try a random size first,
+			# but a larger block that fits is preferred when it comes up).
+			_shuffle_in_place(sizes)
+			var placed: bool = false
+			for sz in sizes:
+				var w: int = sz.x
+				var h: int = sz.y
+				if _can_place(c, r, w, h):
+					for dr in range(h):
+						for dc in range(w):
+							_block[_idx(c + dc, r + dr)] = next_id
+					next_id += 1
+					placed = true
+					break
+			if not placed:
+				_block[_idx(c, r)] = next_id
+				next_id += 1
 
 
-## Remove all nodes on row `r` outside [c_start, c_end], cleaning edges.
-func _remove_row_outside_span(r: int, c_start: int, c_end: int) -> void:
-	for c in range(cols):
-		if c < c_start or c > c_end:
-			_remove_node(Vector2i(c, r))
+func _can_place(c: int, r: int, w: int, h: int) -> bool:
+	if c + w > cols or r + h > rows:
+		return false
+	for dr in range(h):
+		for dc in range(w):
+			if _block_of(c + dc, r + dr) != -1:
+				return false
+	return true
+
+
+func _shuffle_in_place(arr: Array) -> void:
+	for i in range(arr.size() - 1, 0, -1):
+		var j: int = rng.randi_range(0, i)
+		var tmp = arr[i]
+		arr[i] = arr[j]
+		arr[j] = tmp
+
+
+# ----------------------------------------------------- pass 3: boundary edges
+
+
+## Create edges between adjacent cells that belong to DIFFERENT blocks.
+## Interior adjacencies of a superblock (same block on both sides) are
+## skipped, so a 2x2 block has no internal roads. This produces varied
+## block sizes, T-junctions at block boundaries, and longer uninterrupted
+## road stretches around larger blocks.
+func _build_boundary_edges() -> void:
+	for r in range(rows):
+		for c in range(cols):
+			var key := Vector2i(c, r)
+			if c + 1 < cols and _block_of(c, r) != _block_of(c + 1, r):
+				_connect(key, Vector2i(c + 1, r))
+			if r + 1 < rows and _block_of(c, r) != _block_of(c, r + 1):
+				_connect(key, Vector2i(c, r + 1))
 
 
 # ------------------------------------------------------ pass 3: diagonal avenues
@@ -265,6 +296,18 @@ func _compute_boundary() -> void:
 
 
 # -------------------------------------------------------------- helpers
+
+
+## Flatten a (c, r) cell coordinate into the _block array index.
+func _idx(c: int, r: int) -> int:
+	return r * cols + c
+
+
+## Block id assigned to cell (c, r), or -1 if unassigned / out of bounds.
+func _block_of(c: int, r: int) -> int:
+	if c < 0 or c >= cols or r < 0 or r >= rows:
+		return -1
+	return _block[_idx(c, r)]
 
 
 func _inner_rect() -> Rect2:

@@ -170,7 +170,6 @@ func test_right_lane_invariant_on_street_network() -> void:
 	gen.margin_px = 40.0
 	gen.target_block_size = 128.0
 	gen.block_jitter = 0.25
-	gen.partial_road_fraction = 0.3
 	gen.diagonal_count = 2
 	gen.snap_tolerance = 24.0
 	gen.rng.seed = 42

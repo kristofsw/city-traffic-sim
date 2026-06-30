@@ -1,6 +1,6 @@
 extends GutTest
-## Unit tests for StreetNetworkGenerator (variable grid + T-junctions +
-## 45° diagonals).
+## Unit tests for StreetNetworkGenerator (variable grid + superblock tiling
+## for varied block sizes + T-junctions + 45° diagonals).
 
 
 func _build_gen() -> StreetNetworkGenerator:
@@ -9,7 +9,6 @@ func _build_gen() -> StreetNetworkGenerator:
 	gen.margin_px = 40.0
 	gen.target_block_size = 128.0
 	gen.block_jitter = 0.25
-	gen.partial_road_fraction = 0.3
 	gen.diagonal_count = 2
 	gen.snap_tolerance = 24.0
 	gen.rng.seed = 42
@@ -94,7 +93,36 @@ func test_has_t_junctions_degree_3() -> void:
 	for key in gen.edges:
 		if gen.edges[key].size() == 3:
 			t_junctions += 1
-	assert_gt(t_junctions, 0, "should have at least one T-junction (degree 3) from partial roads")
+	assert_gt(
+		t_junctions, 0, "should have at least one T-junction (degree 3) from superblock boundaries"
+	)
+
+
+func test_has_superblock_gaps() -> void:
+	# Superblock tiling should leave at least one pair of adjacent cells
+	# with no edge between them (the interior of a 2x1/1x2/2x2 block).
+	# Disable diagonals to isolate the grid for a clean check.
+	var gen := _build_gen()
+	gen.diagonal_count = 0
+	gen.generate()
+	var has_gap: bool = false
+	for r in range(gen.rows):
+		for c in range(gen.cols):
+			var key := Vector2i(c, r)
+			if not gen.nodes.has(key):
+				continue
+			# Horizontal neighbor (c+1, r): edge should exist for a 1x1
+			# boundary but be missing if both cells are in the same block.
+			if c + 1 < gen.cols and gen.nodes.has(Vector2i(c + 1, r)):
+				if not gen.edges[key].has(Vector2i(c + 1, r)):
+					has_gap = true
+			# Vertical neighbor (c, r+1).
+			if r + 1 < gen.rows and gen.nodes.has(Vector2i(c, r + 1)):
+				if not gen.edges[key].has(Vector2i(c, r + 1)):
+					has_gap = true
+	assert_true(
+		has_gap, "superblock tiling should leave at least one gap (interior of a superblock)"
+	)
 
 
 func test_has_diagonal_edges() -> void:

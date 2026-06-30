@@ -31,7 +31,6 @@ const ROUTE_RING_INNER := Color(0.168, 0.168, 0.188, 1)  # asphalt core for ring
 ## StreetNetworkGenerator params (used only when generator_type == "street_network"
 ## and no map_generator preset is assigned).
 @export var block_jitter: float = 0.25
-@export var partial_road_fraction: float = 0.3
 @export var diagonal_count: int = 2
 @export var snap_tolerance: float = 24.0
 ## Optional map-generator preset (.tres). When assigned, RoadGrid uses a
@@ -67,7 +66,6 @@ func _regenerate() -> void:
 		sn.road_width = road_width
 		sn.lane_width = lane_width
 		sn.block_jitter = block_jitter
-		sn.partial_road_fraction = partial_road_fraction
 		sn.diagonal_count = diagonal_count
 		sn.snap_tolerance = snap_tolerance
 		generator = sn
