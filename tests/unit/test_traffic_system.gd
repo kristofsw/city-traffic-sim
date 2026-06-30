@@ -108,3 +108,20 @@ func test_gap_below_min_gap_stops() -> void:
 	assert_eq(
 		follower.mover._acc_target_speed, 0.0, "gap below min_gap should force target to 0 (stop)"
 	)
+
+
+func test_oncoming_traffic_not_a_lead() -> void:
+	var ts := TrafficSystem.new()
+	# Follower heading east (0 rad); oncoming bus heading west (PI rad), 80px
+	# ahead in the other lane (slight lateral offset). Oncoming traffic must
+	# not be treated as a lead -- the follower should NOT slow down.
+	var follower := _build_vehicle(Vector2(0, 0), 0.0, 80.0)
+	var oncoming := _build_vehicle(Vector2(80, 32), PI, 50.0)
+	oncoming.mover._ensure_spec().body_width = 22.0
+	oncoming.mover._ensure_spec().body_length = 52.0
+	ts.update([follower, oncoming], 1.0 / 60.0)
+	assert_eq(
+		follower.mover._acc_target_speed,
+		-1.0,
+		"oncoming traffic (opposite heading) should not be treated as a lead"
+	)

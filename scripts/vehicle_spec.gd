@@ -37,8 +37,8 @@ extends Resource
 @export var follow_min_gap: float = 40.0  # px
 
 # --- Lane / trajectory ---
-@export var lane_offset: float = 12.0  # half-lane, right-hand drive
-@export var turn_radius: float = 22.0  # px; pull-back before intersection for arc
+@export var lane_offset: float = 16.0  # half-lane, right-hand drive
+@export var turn_radius: float = 26.0  # px; pull-back before intersection for arc
 
 # --- Body dimensions ---
 @export var body_length: float = 36.0

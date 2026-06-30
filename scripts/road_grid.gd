@@ -18,11 +18,11 @@ const ROUTE_RING_INNER := Color(0.168, 0.168, 0.188, 1)  # asphalt core for ring
 @export var screen_size: Vector2 = Vector2(1280, 720)
 @export var margin_px: float = 40.0
 @export var target_block_size: float = 128.0
-@export var road_width: float = 48.0
-@export var lane_width: float = 24.0
+@export var road_width: float = 64.0
+@export var lane_width: float = 32.0
 @export var show_debug: bool = false
-@export var lane_offset: float = 12.0  # right-hand lane offset, matches vehicle
-@export var turn_radius_for_route: float = 22.0  # matches vehicle turn_radius
+@export var lane_offset: float = 16.0  # right-hand lane offset, matches vehicle
+@export var turn_radius_for_route: float = 26.0  # matches vehicle turn_radius
 ## Which built-in generator to use when no `map_generator` preset is assigned.
 ## "grid" = Manhattan grid (GridGenerator); "street_network" = variable grid
 ## with T-junctions and 45° diagonals (StreetNetworkGenerator). The

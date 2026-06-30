@@ -16,8 +16,8 @@ func test_spec_defaults_match_final_feel() -> void:
 	)
 	assert_almost_eq(s.turn_look_ahead, 50.0, 0.001, "turn_look_ahead default should be 50")
 	assert_almost_eq(s.max_speed, 80.0, 0.001, "max_speed default should be 80")
-	assert_almost_eq(s.lane_offset, 12.0, 0.001, "lane_offset default should be 12")
-	assert_almost_eq(s.turn_radius, 22.0, 0.001, "turn_radius default should be 22")
+	assert_almost_eq(s.lane_offset, 16.0, 0.001, "lane_offset default should be 16")
+	assert_almost_eq(s.turn_radius, 26.0, 0.001, "turn_radius default should be 26")
 
 
 func test_spec_colors_and_dimensions() -> void:

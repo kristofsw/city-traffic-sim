@@ -26,6 +26,10 @@ const CONE_HALF_ANGLE := 0.52  # radians (~30°)
 ## Extra detection range beyond the speed-scaled look-ahead (px). Ensures a
 ## slow/stopped car still detects a lead a short distance ahead.
 const DETECTION_MARGIN := 60.0
+## Two vehicles whose headings differ by more than this are oncoming (opposite
+## directions), not lead/follower. Excludes oncoming traffic from ACC so a
+## wide bus in the other lane doesn't make following cars stop.
+const _ONCOMING_HEADING_THRESHOLD := 2.4  # radians (~137°, half-pi + margin)
 
 
 ## Update all vehicles' ACC constraints for this frame. Call BEFORE the
@@ -73,6 +77,15 @@ func _find_lead(
 		# vector to the other vehicle must be within CONE_HALF_ANGLE.
 		var angle: float = abs(f_dir.angle_to(offset.normalized()))
 		if angle > CONE_HALF_ANGLE:
+			continue
+		# Oncoming-traffic filter: if the other vehicle is heading toward
+		# the follower (opposite direction, > 90° apart), it is not a
+		# lead to follow -- it's oncoming traffic in the other lane. A wide
+		# bus at close range falls inside the position cone but is never
+		# something the follower should trail behind.
+		var other_heading: float = other.heading
+		var heading_delta: float = abs(angle_difference(f_heading, other_heading))
+		if heading_delta > _ONCOMING_HEADING_THRESHOLD:
 			continue
 		# Convert center-to-center distance to bumper-to-bumper gap so the
 		# ACC min-gap is measured edge-to-edge, not center-to-center.
