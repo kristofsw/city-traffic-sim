@@ -14,10 +14,11 @@ extends Node2D
 const VehicleScene := preload("res://scenes/vehicle.tscn")
 
 @export var road_grid: RoadGrid = null
-@export var spawn_count: int = 1  # number of vehicles to spawn at startup
+@export var spawn_count: int = 10  # number of vehicles to spawn at startup
 
 var vehicles: Array[VehicleController] = []
 var spawner: VehicleSpawner = null
+var traffic: TrafficSystem = null
 var rng := RandomNumberGenerator.new()
 
 
@@ -53,15 +54,60 @@ func _setup_spawner() -> void:
 	spawner.graph = road_grid.get_graph()
 	spawner.generator = road_grid.get_generator()
 	spawner.rng = rng
+	spawner.spec_pool = _build_spec_pool()
 	# The spawner emits path assignments; we forward them to RoadGrid so the
 	# route viz stays in sync without the spawner knowing about RoadGrid.
 	spawner.vehicle_path_assigned.connect(_on_vehicle_path_assigned)
+	traffic = TrafficSystem.new()
+
+
+## Build a pool of VehicleSpecs with varied cruising speeds and colors so
+## multi-vehicle traffic has natural speed variation: some cars hurry,
+## others cruise. The spawner picks one at random per vehicle (duplicated
+## so each vehicle owns its copy).
+func _build_spec_pool() -> Array[VehicleSpec]:
+	var pool: Array[VehicleSpec] = []
+	# Cruiser: default speed, muted gray-blue.
+	var cruiser := VehicleSpec.new()
+	cruiser.max_speed = 70.0
+	cruiser.body_color = Color(0.42, 0.45, 0.50, 1)
+	pool.append(cruiser)
+	# Sedan: standard speed, silver.
+	var sedan := VehicleSpec.new()
+	sedan.max_speed = 85.0
+	sedan.body_color = Color(0.55, 0.57, 0.62, 1)
+	pool.append(sedan)
+	# Racer: fast, red, shorter following gap (aggressive).
+	var racer := VehicleSpec.new()
+	racer.max_speed = 105.0
+	racer.body_color = Color(0.78, 0.25, 0.25, 1)
+	racer.follow_time_gap = 1.1
+	racer.follow_min_gap = 24.0
+	pool.append(racer)
+	# Bus: slow, long, green, wider following gap (cautious).
+	var bus := VehicleSpec.new()
+	bus.max_speed = 55.0
+	bus.body_color = Color(0.30, 0.55, 0.35, 1)
+	bus.body_length = 52.0
+	bus.body_width = 22.0
+	bus.follow_time_gap = 2.0
+	bus.follow_min_gap = 40.0
+	pool.append(bus)
+	return pool
 
 
 func _spawn_initial_vehicles() -> void:
 	for i in range(spawn_count):
 		var v: VehicleController = spawner.spawn(self, _on_vehicle_arrived)
 		vehicles.append(v)
+
+
+## Run the traffic system BEFORE the children's _process. Godot processes a
+## parent's _process before its children's, so the ACC constraints are set
+## just before each VehicleController._process calls mover.update(delta).
+func _process(delta: float) -> void:
+	if traffic != null and not vehicles.is_empty():
+		traffic.update(vehicles, delta)
 
 
 ## Called when any vehicle arrives; the spawner repaths it from its last
