@@ -253,7 +253,7 @@ func test_acc_prevents_overtaking() -> void:
 	var follow_spec := VehicleSpec.new()
 	follow_spec.max_speed = 120.0
 	follow_spec.follow_time_gap = 1.5
-	follow_spec.follow_min_gap = 30.0
+	follow_spec.follow_min_gap = 40.0
 
 	var lead_mover := VehicleMover.new()
 	lead_mover.graph = graph

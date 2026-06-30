@@ -32,9 +32,9 @@ extends Resource
 ## distance scales with speed: gap_target = current_speed * follow_time_gap
 ## + follow_min_gap. A shorter gap = more aggressive tailgating.
 @export var follow_time_gap: float = 1.5  # seconds
-## Minimum following distance kept even at standstill (px). Below this the
-## car holds still (target drops to 0).
-@export var follow_min_gap: float = 30.0  # px
+## Minimum following distance kept even at standstill (px, bumper-to-bumper).
+## Below this the car holds still (target drops to 0).
+@export var follow_min_gap: float = 40.0  # px
 
 # --- Lane / trajectory ---
 @export var lane_offset: float = 12.0  # half-lane, right-hand drive

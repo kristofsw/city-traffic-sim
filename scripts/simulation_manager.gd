@@ -82,7 +82,7 @@ func _build_spec_pool() -> Array[VehicleSpec]:
 	racer.max_speed = 105.0
 	racer.body_color = Color(0.78, 0.25, 0.25, 1)
 	racer.follow_time_gap = 1.1
-	racer.follow_min_gap = 24.0
+	racer.follow_min_gap = 30.0
 	pool.append(racer)
 	# Bus: slow, long, green, wider following gap (cautious).
 	var bus := VehicleSpec.new()
@@ -91,7 +91,7 @@ func _build_spec_pool() -> Array[VehicleSpec]:
 	bus.body_length = 52.0
 	bus.body_width = 22.0
 	bus.follow_time_gap = 2.0
-	bus.follow_min_gap = 40.0
+	bus.follow_min_gap = 50.0
 	pool.append(bus)
 	return pool
 

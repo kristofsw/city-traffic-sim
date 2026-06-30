@@ -28,14 +28,15 @@ func test_no_lead_when_alone() -> void:
 func test_lead_detected_directly_ahead() -> void:
 	var ts := TrafficSystem.new()
 	# Follower at origin heading east (0 rad); lead 80px ahead, same lane.
+	# Both cars body_length=36 -> bumper-to-bumper gap = 80 - 36 = 44px.
 	var follower := _build_vehicle(Vector2(0, 0), 0.0, 80.0)
 	var lead := _build_vehicle(Vector2(80, 0), 0.0, 40.0)
 	ts.update([follower, lead], 1.0 / 60.0)
-	# gap=80, lead_speed=40, min_gap=30, time_gap=1.5
-	# safe = 40 + (80-30)/1.5 = 40 + 33.33 = 73.33
+	# gap=44, lead_speed=40, min_gap=40, time_gap=1.5
+	# safe = 40 + (44-40)/1.5 = 40 + 2.67 = 42.67
 	assert_almost_eq(
 		follower.mover._acc_target_speed,
-		40.0 + (80.0 - 30.0) / 1.5,
+		40.0 + (44.0 - 40.0) / 1.5,
 		0.01,
 		"follower should match lead speed + gap term"
 	)
@@ -70,7 +71,7 @@ func test_no_lead_outside_cone() -> void:
 
 func test_no_lead_beyond_look_ahead() -> void:
 	var ts := TrafficSystem.new()
-	# Follower at standstill (speed=0) -> look_ahead = 0 + 30 + 60 = 90px.
+	# Follower at standstill (speed=0) -> look_ahead = 0 + 40 + 60 = 100px.
 	# Other 200px ahead -> beyond look-ahead -> no lead.
 	var follower := _build_vehicle(Vector2(0, 0), 0.0, 0.0)
 	var other := _build_vehicle(Vector2(200, 0), 0.0, 40.0)
@@ -85,25 +86,24 @@ func test_no_lead_beyond_look_ahead() -> void:
 func test_nearest_lead_wins() -> void:
 	var ts := TrafficSystem.new()
 	# Two leads ahead: near at 60px (speed 20), far at 120px (speed 60).
-	# The near one is the lead (smallest gap).
+	# bumper-to-bumper gaps: 60-36=24, 120-36=84.
 	var follower := _build_vehicle(Vector2(0, 0), 0.0, 80.0)
 	var near := _build_vehicle(Vector2(60, 0), 0.0, 20.0)
 	var far := _build_vehicle(Vector2(120, 0), 0.0, 60.0)
 	ts.update([follower, near, far], 1.0 / 60.0)
-	# safe from near: 20 + (60-30)/1.5 = 20 + 20 = 40
-	assert_almost_eq(
+	# safe from near: 20 + (24-40)/1.5 -> negative -> 0 (gap < min_gap)
+	assert_eq(
 		follower.mover._acc_target_speed,
-		20.0 + (60.0 - 30.0) / 1.5,
-		0.01,
-		"nearest lead should be used (gap=60, speed=20 -> safe=40)"
+		0.0,
+		"nearest lead (bumper gap 24 < min_gap 40) should force stop"
 	)
 
 
 func test_gap_below_min_gap_stops() -> void:
 	var ts := TrafficSystem.new()
-	# Gap 20px < min_gap 30 -> safe_speed = 0.
+	# Two cars 50px center-to-center -> bumper gap = 50-36 = 14px < min_gap 40 -> stop.
 	var follower := _build_vehicle(Vector2(0, 0), 0.0, 80.0)
-	var lead := _build_vehicle(Vector2(20, 0), 0.0, 40.0)
+	var lead := _build_vehicle(Vector2(50, 0), 0.0, 40.0)
 	ts.update([follower, lead], 1.0 / 60.0)
 	assert_eq(
 		follower.mover._acc_target_speed, 0.0, "gap below min_gap should force target to 0 (stop)"

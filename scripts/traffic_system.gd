@@ -74,8 +74,17 @@ func _find_lead(
 		var angle: float = abs(f_dir.angle_to(offset.normalized()))
 		if angle > CONE_HALF_ANGLE:
 			continue
-		if dist < best_gap:
-			best_gap = dist
+		# Convert center-to-center distance to bumper-to-bumper gap so the
+		# ACC min-gap is measured edge-to-edge, not center-to-center.
+		# Without this, two 36px cars 30px apart "gap" are actually
+		# overlapping by 6px (rear-ending).
+		var gap: float = (
+			dist - spec.body_length * 0.5 - other.mover._ensure_spec().body_length * 0.5
+		)
+		if gap > look_ahead or gap < 0.001:
+			continue
+		if gap < best_gap:
+			best_gap = gap
 			best_vehicle = other
 			best_speed = other.current_speed
 	if best_vehicle == null:

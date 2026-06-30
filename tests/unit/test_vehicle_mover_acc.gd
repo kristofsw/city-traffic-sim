@@ -19,13 +19,17 @@ func test_set_lead_constraint_caps_target_speed() -> void:
 	# Natural target at s=0 is max_speed (no turn/end effect at the start).
 	var natural: float = m.target_speed_at(0.0)
 	assert_almost_eq(natural, 80.0, 0.001, "natural target at start should be max_speed")
-	# Set a lead constraint: gap=90px, lead_speed=40, min_gap=30, time_gap=1.5
-	# safe = 40 + (90-30)/1.5 = 40 + 40 = 80 -> no cap (== natural).
+	# Set a lead constraint: gap=90px, lead_speed=40, min_gap=40, time_gap=1.5
+	# safe = 40 + (90-40)/1.5 = 40 + 33.33 = 73.33 -> caps natural 80.
 	m.set_lead_constraint(90.0, 40.0)
-	assert_almost_eq(m.target_speed_at(0.0), 80.0, 0.001, "safe==natural should not cap")
-	# Tighter gap: gap=60, lead=40 -> safe = 40 + (60-30)/1.5 = 40 + 20 = 60
+	assert_almost_eq(
+		m.target_speed_at(0.0), 73.33, 0.01, "ACC should cap target to safe speed 73.33"
+	)
+	# Tighter gap: gap=60, lead=40 -> safe = 40 + (60-40)/1.5 = 40 + 13.33 = 53.33
 	m.set_lead_constraint(60.0, 40.0)
-	assert_almost_eq(m.target_speed_at(0.0), 60.0, 0.001, "ACC should cap target to safe speed 60")
+	assert_almost_eq(
+		m.target_speed_at(0.0), 53.33, 0.01, "ACC should cap target to safe speed 53.33"
+	)
 	# Very tight: gap < min_gap -> safe = 0
 	m.set_lead_constraint(20.0, 40.0)
 	assert_almost_eq(m.target_speed_at(0.0), 0.0, 0.001, "gap below min_gap should cap target to 0")
