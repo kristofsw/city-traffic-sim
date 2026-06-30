@@ -11,6 +11,7 @@ A minimalist, top-down city traffic simulation built in Godot 4.7, designed as a
 - **Acceleration / deceleration** — S-curve ramp up from standstill, smoothstep deceleration to stop at the destination, and apex-based slowdown through turns (slowest in the middle of each arc), with a windowed look-ahead so the car brakes before the turn and sustains the corner speed.
 - **Brake lights** — taillights brighten in proportion to braking intensity, glow gently whenever the car eases off (coasts down toward a lower target), and stay **bright while stopped** at a zero target (future-proofs for traffic lights). Brake lights fire on any deceleration reason, not only turns.
 - **Turn indicators** — amber blinkers at the corners on the turning side fire 0.2s on / 0.2s off as soon as a turn enters the look-ahead window (while the car is already decelerating toward it) and cancel once the turn leaves the window.
+- **Multi-vehicle traffic with ACC** — 10 vehicles spawn with varied specs (cruiser/sedan/racer/bus, each with its own max speed, color, body size, and following gap). A `TrafficSystem` runs Adaptive Cruise Control each frame: for each vehicle it finds the nearest one ahead in a ~30° forward cone and caps the follower's target speed to maintain a safe following distance (`safe = lead_speed + (gap − min_gap) / time_gap`). Cars never pass through each other; faster cars stack up behind slower ones and ease off naturally. Oncoming traffic in the other lane is excluded by the cone test.
 - **Always-on route visualization** — soft cyan route line plus green start (A) and red goal (B) rings, drawn on the same right-lane offset trajectory the vehicle follows.
 - **Debug overlay** — F1 toggles raw graph nodes/edges; F5 regenerates the grid.
 
@@ -20,7 +21,7 @@ A minimalist, top-down city traffic simulation built in Godot 4.7, designed as a
 - [x] Phase 2 — Vehicle & basic movement
 - [x] Phase 3 — A\* pathfinding A→B with continuous repathing
 - [ ] Phase 4 — Traffic lights & right-of-way
-- [ ] Phase 5 — Multi-vehicle simulation & collision avoidance
+- [x] Phase 5 — Multi-vehicle simulation & collision avoidance (ACC)
 - [ ] Phase 6 — Visual polish & wallpaper export
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design and class contracts, and the **Roadmap** below for where Phases 4–6 plug in.
@@ -84,8 +85,9 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for layer-by-layer contracts, algorithm d
 | `scripts/circle_drawer.gd` | `CircleDrawer` | `Node2D` | Minimal leaf node drawing a filled circle (lights) |
 | `scripts/vehicle_controller.gd` | `VehicleController` | `Node2D` | Thin orchestrator: owns a mover + body, calls `mover.update(delta)`, re-emits `arrived` |
 | `scripts/vehicle_spawner.gd` | `VehicleSpawner` | `RefCounted` | Spawn/repath policy: picks start/goal, instantiates vehicles, injects spec; multi-vehicle ready |
+| `scripts/traffic_system.gd` | `TrafficSystem` | `RefCounted` | Adaptive Cruise Control: each frame finds the nearest vehicle ahead in a ~30° forward cone and caps the follower's target speed to maintain a safe following distance |
 | `scripts/road_grid.gd` | `RoadGrid` | `Node2D` | Renders roads, lane markings, route visualization, debug overlay; owns the `MapGenerator` |
-| `scripts/simulation_manager.gd` | `SimulationManager` | `Node2D` | Owns `VehicleSpawner`; spawns N vehicles, repaths on arrival, forwards route to `RoadGrid` |
+| `scripts/simulation_manager.gd` | `SimulationManager` | `Node2D` | Owns `VehicleSpawner` + `TrafficSystem`; spawns N vehicles, runs ACC each frame, repaths on arrival, forwards route to `RoadGrid` |
 | `scripts/main.gd` | `Main` | `Node2D` | Entry point: injects `RoadGrid` into `SimulationManager` (sibling mediation) |
 
 ## Configuration
@@ -132,12 +134,14 @@ All vehicle tuning and visual config lives in a `VehicleSpec` Resource (`scripts
 | `taillight_color` | `#ff5a4d` | Taillight fill |
 | `indicator_color` | `#ff9926` | Turn indicator fill (amber) |
 | `indicator_blink_period` | `0.4` | Indicator blink period (s; 0.2 on / 0.2 off) |
+| `follow_time_gap` | `1.5` | ACC desired following time gap (s); look-ahead scales with speed |
+| `follow_min_gap` | `30` | ACC minimum following distance (px); below this the car stops |
 
 ### SimulationManager (`scenes/main.tscn`)
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `spawn_count` | `1` | Number of vehicles to spawn at start (multi-vehicle-ready; route viz shows the most recent) |
+| `spawn_count` | `10` | Number of vehicles to spawn at start (each gets a random spec from the pool: cruiser/sedan/racer/bus) |
 
 ### Map generation (`RoadGrid`)
 
@@ -211,8 +215,9 @@ city-traffic-sim/
 │   ├── circle_drawer.gd       # Minimal leaf node drawing a filled circle
 │   ├── vehicle_controller.gd  # Thin orchestrator (mover + body)
 │   ├── vehicle_spawner.gd     # Spawn/repath policy (multi-vehicle ready)
+│   ├── traffic_system.gd      # Adaptive Cruise Control (ACC) coordinator
 │   ├── road_grid.gd           # Rendering, lane markings, debug overlay
-│   ├── simulation_manager.gd  # Owns spawner; spawns N vehicles, repaths on arrival
+│   ├── simulation_manager.gd  # Owns spawner + traffic; spawns N vehicles, runs ACC
 │   └── main.gd                # Entry point: injects RoadGrid into SimulationManager
 ├── tests/unit/                # GUT unit tests (12 files, 83 tests)
 ├── shaders/                   # Passthrough stubs (Phase 6 polish)
