@@ -18,6 +18,36 @@ func _build_vehicle(pos: Vector2, heading: float, speed: float) -> VehicleContro
 	return v
 
 
+## Build a small grid graph and two vehicles with paths sharing a junction
+## node. Vehicle A heads east along row 0; vehicle B heads south along
+## column 2. They share node (2,0).
+func _build_grid_and_vehicles() -> Array:
+	var gen := GridGenerator.new()
+	gen.screen_size = Vector2(1200, 900)
+	gen.margin_px = 40.0
+	gen.target_block_size = 160.0
+	gen.obstacle_count = 0
+	gen.generate()
+	var graph := RoadGraph.new()
+	graph.build(gen)
+	# A: (0,0) -> (5,0) heading east. B: (2,-1)->(2,3) heading south.
+	# Shared node (2,0).
+	var a := _build_vehicle(Vector2(0, 0), 0.0, 80.0)
+	a.graph = graph
+	a.path = [
+		Vector2i(0, 0),
+		Vector2i(1, 0),
+		Vector2i(2, 0),
+		Vector2i(3, 0),
+		Vector2i(4, 0),
+		Vector2i(5, 0)
+	]
+	var b := _build_vehicle(Vector2(0, 0), 0.0, 80.0)
+	b.graph = graph
+	b.path = [Vector2i(2, 0), Vector2i(2, 1), Vector2i(2, 2), Vector2i(2, 3)]
+	return [graph, a, b]
+
+
 func test_no_lead_when_alone() -> void:
 	var ts := TrafficSystem.new()
 	var v := _build_vehicle(Vector2(0, 0), 0.0, 80.0)
@@ -125,3 +155,120 @@ func test_oncoming_traffic_not_a_lead() -> void:
 		-1.0,
 		"oncoming traffic (opposite heading) should not be treated as a lead"
 	)
+
+
+# ---------------------------------------------------------------------------
+# Junction conflict tests
+# ---------------------------------------------------------------------------
+
+
+func test_junction_further_vehicle_yields() -> void:
+	var ts := TrafficSystem.new()
+	var result := _build_grid_and_vehicles()
+	var a: VehicleController = result[1]
+	var b: VehicleController = result[2]
+	# Shared node (2,0). A is at (1,0)-ish heading east, B is at (2,-1)-ish
+	# heading south — but we set positions directly.
+	var node_pos: Vector2 = a.graph.world_of(Vector2i(2, 0))
+	# A is 60px from the junction (heading east toward it).
+	a.position_on_road = node_pos - Vector2(60, 0)
+	a.heading = 0.0
+	# B is 120px from the junction (heading south toward it).
+	b.position_on_road = node_pos - Vector2(0, 120)
+	b.heading = PI * 0.5
+	ts.update([a, b], 1.0 / 60.0)
+	# A is closer (60 < 120) -> B yields.
+	assert_eq(b.mover._junction_yield_speed, 0.0, "further vehicle (B) should yield to stop")
+	assert_eq(a.mover._junction_yield_speed, -1.0, "closer vehicle (A) should NOT yield")
+
+
+func test_junction_closer_vehicle_proceeds() -> void:
+	var ts := TrafficSystem.new()
+	var result := _build_grid_and_vehicles()
+	var a: VehicleController = result[1]
+	var b: VehicleController = result[2]
+	var node_pos: Vector2 = a.graph.world_of(Vector2i(2, 0))
+	# B is closer (40px), A is further (150px) -> A yields.
+	b.position_on_road = node_pos - Vector2(0, 40)
+	b.heading = PI * 0.5
+	a.position_on_road = node_pos - Vector2(150, 0)
+	a.heading = 0.0
+	ts.update([a, b], 1.0 / 60.0)
+	assert_eq(a.mover._junction_yield_speed, 0.0, "further vehicle (A) should yield")
+	assert_eq(b.mover._junction_yield_speed, -1.0, "closer vehicle (B) should NOT yield")
+
+
+func test_junction_same_direction_no_conflict() -> void:
+	var ts := TrafficSystem.new()
+	var result := _build_grid_and_vehicles()
+	var a: VehicleController = result[1]
+	var b: VehicleController = result[2]
+	var node_pos: Vector2 = a.graph.world_of(Vector2i(2, 0))
+	# Both heading east (parallel) -> no junction conflict (ACC handles).
+	a.position_on_road = node_pos - Vector2(60, 0)
+	a.heading = 0.0
+	b.position_on_road = node_pos - Vector2(120, 0)
+	b.heading = 0.0
+	# B's path also goes east (same direction as A).
+	b.path = a.path.duplicate()
+	ts.update([a, b], 1.0 / 60.0)
+	assert_eq(
+		a.mover._junction_yield_speed,
+		-1.0,
+		"same-direction traffic should not trigger junction yield"
+	)
+	assert_eq(
+		b.mover._junction_yield_speed,
+		-1.0,
+		"same-direction traffic should not trigger junction yield"
+	)
+
+
+func test_junction_beyond_look_ahead_no_conflict() -> void:
+	var ts := TrafficSystem.new()
+	var result := _build_grid_and_vehicles()
+	var a: VehicleController = result[1]
+	var b: VehicleController = result[2]
+	var node_pos: Vector2 = a.graph.world_of(Vector2i(2, 0))
+	# A is 60px from junction, B is 300px (beyond CONFLICT_LOOK_AHEAD=200).
+	a.position_on_road = node_pos - Vector2(60, 0)
+	a.heading = 0.0
+	b.position_on_road = node_pos - Vector2(0, 300)
+	b.heading = PI * 0.5
+	ts.update([a, b], 1.0 / 60.0)
+	assert_eq(a.mover._junction_yield_speed, -1.0, "A within range, B beyond range -> no yield")
+	assert_eq(b.mover._junction_yield_speed, -1.0, "B beyond look-ahead should not yield")
+
+
+func test_junction_already_passed_no_conflict() -> void:
+	var ts := TrafficSystem.new()
+	var result := _build_grid_and_vehicles()
+	var a: VehicleController = result[1]
+	var b: VehicleController = result[2]
+	var node_pos: Vector2 = a.graph.world_of(Vector2i(2, 0))
+	# A is past the junction (heading east, node is behind it).
+	a.position_on_road = node_pos + Vector2(50, 0)
+	a.heading = 0.0
+	b.position_on_road = node_pos - Vector2(0, 60)
+	b.heading = PI * 0.5
+	ts.update([a, b], 1.0 / 60.0)
+	assert_eq(
+		b.mover._junction_yield_speed, -1.0, "B should not yield when A already passed junction"
+	)
+
+
+func test_junction_tiebreaker_lower_index_proceeds() -> void:
+	var ts := TrafficSystem.new()
+	var result := _build_grid_and_vehicles()
+	var a: VehicleController = result[1]
+	var b: VehicleController = result[2]
+	var node_pos: Vector2 = a.graph.world_of(Vector2i(2, 0))
+	# Both 100px from the junction, perpendicular headings -> tie.
+	a.position_on_road = node_pos - Vector2(100, 0)
+	a.heading = 0.0
+	b.position_on_road = node_pos - Vector2(0, 100)
+	b.heading = PI * 0.5
+	ts.update([a, b], 1.0 / 60.0)
+	# a is index 0, b is index 1 -> b yields.
+	assert_eq(b.mover._junction_yield_speed, 0.0, "tie: higher index (B) should yield")
+	assert_eq(a.mover._junction_yield_speed, -1.0, "tie: lower index (A) should proceed")

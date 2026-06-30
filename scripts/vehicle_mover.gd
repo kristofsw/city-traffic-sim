@@ -114,6 +114,11 @@ var _default_spec: VehicleSpec = null  # lazily created for spec-less tests
 var _lead_gap: float = -1.0  # distance to the lead vehicle (px); -1 = none
 var _lead_speed: float = 0.0  # speed of the lead vehicle (px/s)
 var _acc_target_speed: float = -1.0  # computed safe speed; -1 = unconstrained
+# Junction conflict yield constraint set by an external TrafficSystem each
+# frame BEFORE update(). When a cross-traffic conflict is detected at a
+# shared junction ahead, the yielding vehicle's target is capped to this
+# speed (typically 0.0 to stop). -1.0 means no constraint.
+var _junction_yield_speed: float = -1.0  # -1 = none
 
 
 ## Apply a VehicleSpec to this mover. The controller calls this on _ready.
@@ -155,6 +160,21 @@ func set_lead_constraint(gap: float, lead_speed: float) -> void:
 func clear_lead_constraint() -> void:
 	_lead_gap = -1.0
 	_acc_target_speed = -1.0
+
+
+## Set the junction-yield constraint for this frame. Called by a
+## TrafficSystem BEFORE update() when a cross-traffic conflict is detected
+## at a shared junction ahead. The natural target is capped to this speed
+## (typically 0.0 to stop and let the cross-traffic clear the junction).
+## Pass a negative value to clear the constraint.
+func set_junction_yield(target_speed: float) -> void:
+	_junction_yield_speed = target_speed
+
+
+## Clear the junction-yield constraint (no conflict this frame). Called by
+## the TrafficSystem at the start of each frame for every vehicle.
+func clear_junction_yield() -> void:
+	_junction_yield_speed = -1.0
 
 
 func assign_path(new_path: Array[Vector2i], lane_offset: float, turn_radius: float) -> void:
@@ -251,9 +271,12 @@ func target_speed_at(s_pos: float) -> float:
 		end_factor = _smoothstep((trajectory.total_length - s_pos) / _eff_decel)
 	var turn_factor: float = turn_factor_windowed(s_pos)
 	var natural: float = max_speed * end_factor * turn_factor
+	var result: float = natural
 	if _acc_target_speed >= 0.0:
-		return min(natural, _acc_target_speed)
-	return natural
+		result = min(result, _acc_target_speed)
+	if _junction_yield_speed >= 0.0:
+		result = min(result, _junction_yield_speed)
+	return result
 
 
 ## Turn slowdown factor at a given arc-length position. 1.0 on straights

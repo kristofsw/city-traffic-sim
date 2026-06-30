@@ -30,14 +30,25 @@ const DETECTION_MARGIN := 60.0
 ## directions), not lead/follower. Excludes oncoming traffic from ACC so a
 ## wide bus in the other lane doesn't make following cars stop.
 const _ONCOMING_HEADING_THRESHOLD := 2.4  # radians (~137°, half-pi + margin)
+## How far ahead to look for junction conflicts (px). ~1.5 blocks. Both
+## vehicles must be within this distance of a shared junction node for the
+## conflict to trigger.
+const CONFLICT_LOOK_AHEAD := 200.0
+## Minimum heading difference (radians) for a junction conflict. Below this
+## the vehicles are parallel (same direction) — ACC handles following. Above
+## PI minus this they are oncoming (same road, different lanes) — the ACC
+## oncoming filter handles that. Only cross-traffic (30°..150°) conflicts.
+const CONFLICT_ANGLE_THRESHOLD := 0.52  # radians (~30°)
 
 
-## Update all vehicles' ACC constraints for this frame. Call BEFORE the
-## vehicles' movers update (Godot processes the parent's _process before
-## its children's, so SimulationManager._process runs before each
-## VehicleController._process -- the constraints are set just in time).
+## Update all vehicles' ACC constraints and junction-yield constraints for
+## this frame. Call BEFORE the vehicles' movers update (Godot processes the
+## parent's _process before its children's, so SimulationManager._process
+## runs before each VehicleController._process -- the constraints are set
+## just in time).
 func update(vehicles: Array[VehicleController], _delta: float) -> void:
 	var n: int = vehicles.size()
+	# Pass 1: Adaptive Cruise Control (forward following).
 	for i in n:
 		var follower: VehicleController = vehicles[i]
 		if follower == null or follower.mover == null:
@@ -47,6 +58,13 @@ func update(vehicles: Array[VehicleController], _delta: float) -> void:
 			follower.mover.clear_lead_constraint()
 		else:
 			follower.mover.set_lead_constraint(lead["gap"], lead["speed"])
+	# Pass 2: Junction conflict resolution (cross-traffic yielding).
+	# Clear all junction yields first, then resolve pairwise conflicts.
+	for i in n:
+		var v: VehicleController = vehicles[i]
+		if v != null and v.mover != null:
+			v.mover.clear_junction_yield()
+	_resolve_junction_conflicts(vehicles)
 
 
 ## Find the nearest vehicle ahead of `follower` within its forward cone.
@@ -103,3 +121,91 @@ func _find_lead(
 	if best_vehicle == null:
 		return {}
 	return {"vehicle": best_vehicle, "gap": best_gap, "speed": best_speed}
+
+
+## Resolve cross-traffic conflicts at shared junctions. For each pair of
+## vehicles, find shared path nodes (junctions both will pass through). If
+## both are approaching the same junction within CONFLICT_LOOK_AHEAD and
+## their headings differ by more than CONFLICT_ANGLE_THRESHOLD (cross-traffic,
+## not parallel), the vehicle further from the junction yields (stops). The
+## closer vehicle proceeds. Tiebreaker: lower index proceeds (deterministic,
+## prevents both stopping forever).
+func _resolve_junction_conflicts(vehicles: Array[VehicleController]) -> void:
+	var n: int = vehicles.size()
+	for i in n:
+		var a: VehicleController = vehicles[i]
+		if a == null or a.mover == null or a.path.is_empty():
+			continue
+		for j in range(i + 1, n):
+			var b: VehicleController = vehicles[j]
+			if b == null or b.mover == null or b.path.is_empty():
+				continue
+			_resolve_pair(a, b, i, j)
+
+
+## Resolve a single pair of vehicles. Finds their nearest shared junction
+## node ahead and yields the further one if their headings differ enough.
+func _resolve_pair(a: VehicleController, b: VehicleController, idx_a: int, idx_b: int) -> void:
+	# Find shared path nodes (nodes that appear in both vehicles' paths).
+	var shared := _shared_path_nodes(a.path, b.path)
+	if shared.is_empty():
+		return
+	# For each shared node, check if both vehicles are approaching it.
+	for node_key in shared:
+		var node_pos: Vector2 = a.graph.world_of(node_key)
+		var dist_a: float = a.position_on_road.distance_to(node_pos)
+		var dist_b: float = b.position_on_road.distance_to(node_pos)
+		# Both must be within look-ahead range of the junction.
+		if dist_a > CONFLICT_LOOK_AHEAD or dist_b > CONFLICT_LOOK_AHEAD:
+			continue
+		# Both must still be approaching (not already passed). We check if
+		# the node is still ahead in the vehicle's path.
+		if not _is_ahead_in_path(a, node_key):
+			continue
+		if not _is_ahead_in_path(b, node_key):
+			continue
+		# Heading difference: only cross-traffic conflicts (not parallel
+		# same-direction, not oncoming opposite-direction).
+		var heading_delta: float = abs(angle_difference(a.heading, b.heading))
+		if heading_delta < CONFLICT_ANGLE_THRESHOLD:
+			continue  # parallel — ACC handles same-direction following
+		if heading_delta > PI - CONFLICT_ANGLE_THRESHOLD:
+			continue  # oncoming — ACC oncoming filter handles
+		# Conflict detected: the further vehicle yields.
+		if dist_a < dist_b:
+			b.mover.set_junction_yield(0.0)
+		elif dist_b < dist_a:
+			a.mover.set_junction_yield(0.0)
+		else:
+			# Tie: lower index proceeds, higher index yields.
+			if idx_a < idx_b:
+				b.mover.set_junction_yield(0.0)
+			else:
+				a.mover.set_junction_yield(0.0)
+		return  # one conflict per pair per frame is enough
+
+
+## Return the set of Vector2i nodes that appear in both paths.
+func _shared_path_nodes(path_a: Array[Vector2i], path_b: Array[Vector2i]) -> Array[Vector2i]:
+	var set_b: Dictionary = {}
+	for k in path_b:
+		set_b[k] = true
+	var shared: Array[Vector2i] = []
+	for k in path_a:
+		if set_b.has(k):
+			shared.append(k)
+	return shared
+
+
+## True if `node_key` is still ahead of the vehicle in its path (hasn't
+## passed it yet). A node is "ahead" if it appears in the path at or after
+## the vehicle's current segment. We approximate by checking if the node
+## world position is in front of the vehicle (positive projection onto
+## the heading vector).
+func _is_ahead_in_path(v: VehicleController, node_key: Vector2i) -> bool:
+	# Simple forward check: the node is ahead if the vector from the vehicle
+	# to the node has a positive projection onto the vehicle's heading.
+	var node_pos: Vector2 = v.graph.world_of(node_key)
+	var to_node: Vector2 = node_pos - v.position_on_road
+	var f_dir: Vector2 = Vector2.from_angle(v.heading)
+	return f_dir.dot(to_node) > 0.0
