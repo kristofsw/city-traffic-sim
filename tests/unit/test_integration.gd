@@ -2,6 +2,8 @@ extends GutTest
 ## Integration test: full pipeline from grid generation to vehicle arrival.
 ## Verifies the right-lane invariant holds throughout a complete trip.
 
+const VehicleScene := preload("res://scenes/vehicle.tscn")
+
 
 func test_full_trip_right_lane_invariant() -> void:
 	var gen := GridGenerator.new()
@@ -267,7 +269,6 @@ func test_acc_prevents_overtaking() -> void:
 	follow_mover.assign_path(path, 12.0, 22.0)
 
 	# Build lightweight controllers so TrafficSystem can read position/heading.
-	var VehicleScene := preload("res://scenes/vehicle.tscn")
 	var lead_v: VehicleController = VehicleScene.instantiate()
 	add_child(lead_v)
 	autofree(lead_v)
@@ -309,3 +310,100 @@ func test_acc_prevents_overtaking() -> void:
 			break
 
 	assert_false(overtakes, "follower should never overtake the lead (ACC holds the gap)")
+
+
+func test_junction_conflict_yields_and_resumes() -> void:
+	# Two vehicles approaching the same junction from perpendicular
+	# directions. The further one should yield (stop), and the closer one
+	# should proceed through. Once the closer one clears the junction,
+	# the yielding one resumes.
+	var gen := GridGenerator.new()
+	gen.screen_size = Vector2(1280, 720)
+	gen.margin_px = 40.0
+	gen.target_block_size = 128.0
+	gen.obstacle_count = 0
+	gen.generate()
+	var graph := RoadGraph.new()
+	graph.build(gen)
+
+	# Junction at node (3, 3). Vehicle A approaches from the west along
+	# row 3; vehicle B approaches from the north along column 3.
+	var junction := Vector2i(3, 3)
+	var junction_pos: Vector2 = graph.world_of(junction)
+
+	# A: heading east toward the junction, 150px away.
+	var path_a: Array[Vector2i] = []
+	for c in range(0, 6):
+		path_a.append(Vector2i(c, 3))
+	# B: heading south toward the junction, 50px away (closer → has priority).
+	var path_b: Array[Vector2i] = []
+	for r in range(0, 6):
+		path_b.append(Vector2i(3, r))
+
+	var spec := VehicleSpec.new()
+	spec.max_speed = 80.0
+	spec.accel_rate = 200.0  # fast accel so it gets moving quickly
+	spec.decel_rate = 300.0
+
+	var mover_a := VehicleMover.new()
+	mover_a.graph = graph
+	mover_a.apply_spec(spec)
+	mover_a.assign_path(path_a, 12.0, 22.0)
+	# Place A 150px before the junction.
+	var a_offset: float = junction_pos.x - 150.0 - mover_a.position_on_road.x
+	mover_a.s = max(0.0, a_offset)
+	mover_a.position_on_road = mover_a.trajectory.position_at(mover_a.s)
+	mover_a.heading = mover_a.trajectory.tangent_at(mover_a.s)
+
+	var mover_b := VehicleMover.new()
+	mover_b.graph = graph
+	mover_b.apply_spec(spec)
+	mover_b.assign_path(path_b, 12.0, 22.0)
+	# Place B 50px before the junction (closer → priority).
+	var b_offset: float = junction_pos.y - 50.0 - mover_b.position_on_road.y
+	mover_b.s = max(0.0, b_offset)
+	mover_b.position_on_road = mover_b.trajectory.position_at(mover_b.s)
+	mover_b.heading = mover_b.trajectory.tangent_at(mover_b.s)
+
+	var v_a: VehicleController = VehicleScene.instantiate()
+	add_child(v_a)
+	autofree(v_a)
+	v_a.mover = mover_a
+	v_a.mover.position_changed.connect(v_a._on_mover_position_changed)
+	v_a.mover.speed_changed.connect(v_a._on_mover_speed_changed)
+	v_a.graph = graph
+	v_a.path = path_a
+
+	var v_b: VehicleController = VehicleScene.instantiate()
+	add_child(v_b)
+	autofree(v_b)
+	v_b.mover = mover_b
+	v_b.mover.position_changed.connect(v_b._on_mover_position_changed)
+	v_b.mover.speed_changed.connect(v_b._on_mover_speed_changed)
+	v_b.graph = graph
+	v_b.path = path_b
+
+	# Emit initial position so controllers are synced.
+	mover_a.position_changed.emit(mover_a.position_on_road, mover_a.heading)
+	mover_b.position_changed.emit(mover_b.position_on_road, mover_b.heading)
+
+	var ts := TrafficSystem.new()
+	var delta := 1.0 / 60.0
+	var a_yielded: bool = false
+	var a_resumed: bool = false
+
+	for _i in range(900):
+		ts.update([v_a, v_b], delta)
+		mover_a.update(delta)
+		mover_b.update(delta)
+		# Track if A yielded (junction_yield active).
+		if mover_a._junction_yield_speed >= 0.0:
+			a_yielded = true
+		# After yielding, check if A resumed (yield cleared AND moving).
+		if a_yielded and mover_a._junction_yield_speed < 0.0 and mover_a.current_speed > 1.0:
+			a_resumed = true
+		if not mover_a.is_busy() and not mover_b.is_busy():
+			break
+
+	assert_true(a_yielded, "further vehicle (A) should yield at the junction")
+	assert_true(a_resumed, "A should resume after B clears the junction")
